@@ -1,0 +1,94 @@
+# ===========================================
+# VAIO Project .gitignore
+# ===========================================
+
+# ─────────────────────────────
+# Python artifacts
+# ─────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pkl
+*.log
+*.sqlite3
+
+# ─────────────────────────────
+# Build & packaging
+# ─────────────────────────────
+build/
+dist/
+*.egg-info/
+.eggs/
+MANIFEST
+*.spec
+
+# ─────────────────────────────
+# Virtual environments
+# ─────────────────────────────
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+.python-version
+
+# ─────────────────────────────
+# VS Code / JetBrains IDEs
+# ─────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ─────────────────────────────
+# OS generated files
+# ─────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─────────────────────────────
+# Cache & logs
+# ─────────────────────────────
+.cache/
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# ─────────────────────────────
+# VAIO Generated Outputs
+# ─────────────────────────────
+*.mp3
+*.srt
+*.vaio.json
+
+# Output directories
+captions/
+description/
+audio/
+logs/
+
+# ─────────────────────────────
+# Ollama / Whisper artifacts
+# ─────────────────────────────
+*.bin
+*.pt
+*.model
+*.onnx
+*.npy
+
+# ─────────────────────────────
+# Jupyter / notebooks
+# ─────────────────────────────
+.ipynb_checkpoints/
+notebooks/
+
+# ─────────────────────────────
+# Temporary working files
+# ─────────────────────────────
+tmp/
+temp/
+test_*.*
+__test__/

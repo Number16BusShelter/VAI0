@@ -1,0 +1,7 @@
+faster-whisper==1.1.1
+ffmpeg-python==0.2.0
+imageio-ffmpeg==0.6.0
+langchain-ollama==0.3.10
+ollama==0.6.0
+openai-whisper==20250625
+tqdm==4.67.1

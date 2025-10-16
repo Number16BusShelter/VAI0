@@ -1,0 +1,39 @@
+[project]
+name = "vaio"
+version = "1.0.0"
+description = "VAIO – Video Auto Intelligence Operator: end-to-end automation for captions, SEO, and translations."
+authors = [
+  { name = "number16busshelter", email = "admin@axid.one" }
+]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "openai-whisper>=20240930",
+  "ollama>=0.1.9",
+  "ffmpeg-python>=0.2.0",
+  "tqdm>=4.66.5"
+]
+
+[project.scripts]
+vaio = "vaio.cli:main"
+
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Alternative if you want to use python -m style invocation
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vaio*"]
+[tool.setuptools]
+include-package-data = true
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+include_trailing_comma = true
