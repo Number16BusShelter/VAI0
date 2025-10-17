@@ -1,0 +1,40 @@
+# llm.txt
+# Project: VAIO — Video Auto Intelligence Operator
+# Version: 1.0.0
+# Author: AXID.ONE
+# Repository: https://github.com/number16busshelter/VAI0
+# Description: 
+VAIO (Video Auto Intelligence Operator) is a modular CLI framework for automating
+AI-driven video post-production workflows entirely offline.
+
+The pipeline performs:
+1. 🎧 Audio extraction via FFmpeg
+2. 💬 Caption generation via Whisper (local)
+3. 📝 Title + description generation (SEO-optimized) via Ollama LLM
+4. 🌐 Multilingual translation of captions & metadata
+5. 🎙️ Voice narration synthesis using Kokoro-TTS
+6. 🧩 Stage management, rerun capability, and persistent metadata tracking
+
+All outputs are stored beside the source video (no project folders).
+Each stage can run independently or via the full-auto pipeline:
+    vaio ./video.mp4
+or step-by-step:
+    vaio audio video.mp4
+    vaio desc video.mp4 --template-file td_temp.txt
+    vaio translate video.mp4
+    vaio captions video.mp4
+    vaio tts video.mp4
+
+---
+
+## Key Technologies
+- **Python 3.12+**
+- **Ollama** – local LLM for SEO title/description generation
+- **Whisper (OpenAI)** – offline speech-to-text
+- **Kokoro-TTS** – lightweight multilingual text-to-speech (hexgrad/Kokoro)
+- **Rich** – CLI formatting and diagnostics
+- **FFmpeg** – audio extraction and MP3 encoding
+
+---
+
+## Directory Overview

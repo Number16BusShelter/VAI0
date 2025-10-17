@@ -9,7 +9,7 @@ Full staged orchestrator:
 from __future__ import annotations
 from pathlib import Path
 from .utils import load_meta
-from . import audio, description, translate, captions
+from . import audio, description, translate, captions, tts
 
 
 def run(video_path: Path, template_path: Path | None = None):
@@ -57,5 +57,9 @@ def run(video_path: Path, template_path: Path | None = None):
 
     if stage == "captions_translated":
         print("🎉 Full-auto pipeline complete.")
+        print("🎧 Step 5: Generating multilingual voiceovers...")
+        tts.process(video_path)
+
+
     else:
         print(f"ℹ️  Stopped at stage: {stage} (run again to continue)")

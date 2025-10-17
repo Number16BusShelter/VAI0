@@ -116,3 +116,19 @@ def ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
     return path
 
+
+def save_last_command(video_path: Path, argv: list[str]):
+    meta = load_meta(video_path)
+    meta["last_command"] = " ".join(argv)
+    save_meta(video_path, meta)
+
+
+def rerun_last_command(video_path: Path):
+    meta = load_meta(video_path)
+    cmd = meta.get("last_command")
+    if not cmd:
+        print("⚠️ No previous command found for this video.")
+        return
+    print(f"🔁 Rerunning last command:\n   {cmd}")
+    import subprocess
+    subprocess.run(cmd, shell=True)

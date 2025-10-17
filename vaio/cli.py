@@ -21,8 +21,9 @@ from pathlib import Path
 from textwrap import dedent
 
 from vaio.core import audio, description, translate, captions, full_auto
-from vaio.core.utils import load_meta
+from vaio.core.utils import load_meta, save_last_command, rerun_last_command, confirm
 from vaio.core.constants import PROJECT_VERSION, CLI_ICONS
+
 
 try:
     from rich.console import Console
@@ -43,17 +44,42 @@ def success(msg): print(f"{CLI_ICONS.get('success','✅')} {msg}")
 def warn(msg): print(f"{CLI_ICONS.get('warning','⚠️')} {msg}")
 def fail(msg): print(f"{CLI_ICONS.get('error','❌')} {msg}")
 
-
 # ────────────────────────────────
 # Core command handlers
 # ────────────────────────────────
-def handle_audio(args): audio.process(Path(args.video_file).resolve())
+from vaio.core.utils import save_last_command, rerun_last_command, confirm
+
+
+def handle_audio(args):
+    video = Path(args.video_file).resolve()
+    audio.process(video)
+    save_last_command(video, sys.argv)
+
+
 def handle_desc(args):
     video = Path(args.video_file).resolve()
     template = Path(args.template_file).resolve() if args.template_file else None
     description.process(video, template)
-def handle_translate(args): translate.process(Path(args.video_file).resolve())
-def handle_captions(args): captions.process(Path(args.video_file).resolve())
+    save_last_command(video, sys.argv)
+
+
+def handle_translate(args):
+    video = Path(args.video_file).resolve()
+    translate.process(video)
+    save_last_command(video, sys.argv)
+
+
+def handle_captions(args):
+    video = Path(args.video_file).resolve()
+    captions.process(video)
+    save_last_command(video, sys.argv)
+
+def handle_tts(args):
+    video = Path(args.video_file).resolve()
+    from vaio.core import tts  # lazy import so Kokoro loads only when needed
+
+    tts.process(video)
+    save_last_command(video, sys.argv)
 
 
 def handle_continue(video_path: Path):
@@ -195,6 +221,8 @@ def main(argv=None):
 
     # --- Help when no args ---
     if len(sys.argv) == 1:
+        handle_debug()
+
         print("Usage: vaio <command> <video.mp4> [options]\n")
         print("Commands:")
         print("  audio       🎧 Extract audio and generate captions")
@@ -242,6 +270,11 @@ def main(argv=None):
     p_capt = sub.add_parser("captions", help="💬 Translate captions into all languages")
     p_capt.add_argument("video_file")
     p_capt.set_defaults(func=handle_captions)
+
+    # --- tts ---
+    p_tts = sub.add_parser("tts", help="🎙️ Generate voiceovers (Text-to-Speech) from captions")
+    p_tts.add_argument("video_file", help="Path to video file")
+    p_tts.set_defaults(func=handle_tts)
 
     p_check = sub.add_parser("check", help="🧪 Run environment diagnostics")
     p_check.set_defaults(func=handle_debug)
