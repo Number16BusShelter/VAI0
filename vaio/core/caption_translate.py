@@ -130,7 +130,7 @@ def process(video_path: Path):
     Translate the existing captions/<video>.<src_lang>.srt file into all target languages.
     """
     captions_dir = video_path.parent / "captions"
-    base_srt = captions_dir / f"{video_path.stem}.ru.srt"
+    base_srt = captions_dir / f"{video_path.stem}.{}.srt"
 
     # Fallback to plain SRT if old naming still exists
     if not base_srt.exists():

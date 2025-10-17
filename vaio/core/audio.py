@@ -19,6 +19,7 @@ import whisper
 
 from .constants import (
     META_FILENAME,
+    SOURCE_LANGUAGE_CODE,
     WHISPER_MODEL,
     SOURCE_LANGUAGE,
     DEFAULT_AUDIO_RATE,
@@ -103,16 +104,21 @@ def segments_to_srt(segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def generate_captions(audio_path: Path, whisper_model: str = WHISPER_MODEL) -> Path:
+def generate_captions(audio_path: Path, whisper_model: str = WHISPER_MODEL, code: str = SOURCE_LANGUAGE_CODE) -> Path:
     print(f"🧠 Generating captions using Whisper ({whisper_model})...")
 
     model = whisper.load_model(whisper_model)
     task = "translate" if SOURCE_LANGUAGE.lower() != "english" else "transcribe"
-    result = model.transcribe(str(audio_path), task=task)
+    result = model.transcribe(
+        str(audio_path),
+        task=task,
+        word_timestamps=True,
+        condition_on_previous_text=False,
+    )
 
     captions_dir = audio_path.parent / "captions"
     captions_dir.mkdir(exist_ok=True)
-    srt_path = captions_dir / f"{audio_path.stem}.ru.srt"
+    srt_path = captions_dir / f"{audio_path.stem}.{code}.srt"
 
     srt_text = segments_to_srt(result["segments"])
     srt_path.write_text(srt_text, encoding="utf-8")
@@ -138,9 +144,9 @@ def generate_captions(audio_path: Path, whisper_model: str = WHISPER_MODEL) -> P
 # ────────────────────────────────
 # ✅ CAPTION VERIFICATION
 # ────────────────────────────────
-def verify(video_path: Path):
+def verify(video_path: Path, code: str = SOURCE_LANGUAGE_CODE):
     """Ask user to verify and optionally edit captions manually."""
-    srt_path = video_path.parent / "captions" / f"{video_path.stem}.ru.srt"
+    srt_path = video_path.parent / "captions" / f"{video_path.stem}.{code}.srt"
     if not srt_path.exists():
         print(f"❌ No captions found for {video_path.name}. Run `vaio audio {video_path.name}` first.")
         sys.exit(1)

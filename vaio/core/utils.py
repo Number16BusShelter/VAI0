@@ -7,8 +7,11 @@ import concurrent.futures as cf
 from datetime import datetime
 from pathlib import Path
 import ollama
+import requests
+
 
 from .constants import (
+    OLLAMA_HOST,
     OLLAMA_MODEL,
     TEMPERATURE,
     MAX_RETRIES,
@@ -61,6 +64,19 @@ def save_meta(video_path: Path, meta: dict):
 
 
 # ---------- Ollama Chat Wrappers ----------
+def ensure_ollama_running():
+    """Check if Ollama service is online."""
+    try:
+        resp = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=2)
+        if resp.status_code == 200:
+            return True
+    except Exception:
+        pass
+    print(f"⚠️  Ollama service not detected on {OLLAMA_HOST}")
+    print("💡 Run it with: `ollama serve`")
+    sys.exit(1)
+
+
 def retry(func, *args, **kwargs):
     """Generic exponential backoff retry wrapper."""
     delay = INITIAL_BACKOFF_S
@@ -76,9 +92,9 @@ def retry(func, *args, **kwargs):
 
 
 def chat_once(model: str, system_prompt: str, user_prompt: str) -> str:
-    """Single Ollama chat call."""
+    ensure_ollama_running()
     resp = ollama.chat(
-        model=OLLAMA_MODEL,
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -87,6 +103,7 @@ def chat_once(model: str, system_prompt: str, user_prompt: str) -> str:
         stream=False,
     )
     return (resp.get("message") or {}).get("content", "").strip()
+
 
 
 def chat_with_retries(model: str, system_prompt: str, user_prompt: str) -> str:
@@ -98,3 +115,4 @@ def ensure_dir(path: Path):
     """Ensure that the directory exists (mkdir -p)."""
     path.mkdir(parents=True, exist_ok=True)
     return path
+

@@ -86,25 +86,84 @@ def handle_continue(video_path: Path):
     print("All outputs are stored beside the original video.")
 
 
-def handle_debug(_):
+import platform
+import requests
+
+def handle_debug(args: argparse.Namespace):
+    """Run comprehensive environment & dependency diagnostics."""
+    print("🧪 Running VAIO system diagnostics...\n")
+
+    # --- Check functions ---
+    def check_ffmpeg():
+        return shutil.which("ffmpeg") is not None
+
+    def check_whisper():
+        try:
+            import whisper  # noqa
+            return True
+        except Exception:
+            return False
+
+    def check_ollama():
+        try:
+            resp = requests.get("http://localhost:11434/api/tags", timeout=2)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+    def check_vscode():
+        return shutil.which("code") is not None
+
+    def check_permissions():
+        test_file = Path.cwd() / ".vaio_test.tmp"
+        try:
+            test_file.write_text("ok")
+            test_file.unlink()
+            return True
+        except Exception:
+            return False
+
+    # --- Collect results ---
+    checks = {
+        "Python Version": sys.version.split()[0],
+        "OS": platform.system(),
+        "FFmpeg": "✅ OK" if check_ffmpeg() else "❌ Missing",
+        "Whisper": "✅ OK" if check_whisper() else "❌ Missing",
+        "Ollama": "✅ Running" if check_ollama() else "❌ Not reachable",
+        "VS Code": "✅ Found" if check_vscode() else "⚠️ Not found",
+        "Write Access": "✅ OK" if check_permissions() else "❌ No permission",
+    }
+
+    # --- Display results ---
     if RICH_AVAILABLE:
-        table = Table(title="VAIO Diagnostic Report", box=box.SIMPLE_HEAVY)
-        table.add_column("Check", justify="right", style="cyan")
+        table = Table(title="VAIO Preflight Report", box=box.SIMPLE_HEAVY)
+        table.add_column("Component", style="cyan", justify="right")
         table.add_column("Status", style="bold green")
-        ffmpeg_ok = shutil.which("ffmpeg") is not None
-        whisper_ok = _check_import("whisper")
-        ollama_ok = _check_import("ollama")
-        table.add_row("FFmpeg", "✅ OK" if ffmpeg_ok else "❌ Missing")
-        table.add_row("Whisper", "✅ OK" if whisper_ok else "❌ Missing")
-        table.add_row("Ollama", "✅ OK" if ollama_ok else "❌ Missing")
-        table.add_row("Working Dir", str(Path.cwd()))
+        for key, val in checks.items():
+            table.add_row(key, val)
         console.print(table)
     else:
-        print("FFmpeg:", "OK" if shutil.which("ffmpeg") else "Missing")
-        print("Whisper:", "OK" if _check_import("whisper") else "Missing")
-        print("Ollama:", "OK" if _check_import("ollama") else "Missing")
-        print("Working Dir:", Path.cwd())
-    print("\n🧪 Manual test complete.")
+        print("System Diagnostics:")
+        for k, v in checks.items():
+            print(f" - {k}: {v}")
+
+    print("\n💡 Tip: Start Ollama with `ollama serve` if it's not running.")
+    print("   Run `ollama list` to verify installed models.")
+    print("   If any component is missing, reinstall via `pip install -r requirements.txt`.\n")
+
+    # Exit code = 0 if all critical checks pass
+    critical = all([
+        check_ffmpeg(),
+        check_whisper(),
+        check_ollama(),
+        check_permissions()
+    ])
+    if critical:
+        print("✅ Environment ready! You can now run `vaio ./video.mp4` safely.")
+        sys.exit(0)
+    else:
+        print("⚠️ Some checks failed. Fix above issues before running VAIO.")
+        sys.exit(1)
 
 
 def _check_import(module: str) -> bool:

@@ -41,6 +41,7 @@ SYSTEM_PROMPT_CAPTION_TRANSLATE = (
     "1) Do not alter timestamps or formatting.\n"
     "2) Translate spoken lines only.\n"
     "3) Output ONLY the valid .srt file text.\n"
+    "4) Limit the line length to 100-200 characters\n"
 )
 
 USER_PROMPT_CAPTION_TRANSLATE = (
@@ -106,27 +107,61 @@ def translate_one(content: str, src_lang: str, code: str, lang: str, out_path: P
 # ────────────────────────────────
 def process(video_path: Path):
     """
-    Translate the existing <video>.srt file into all target languages.
-    Keeps each output beside the original.
+    Translate the existing captions/<video>.<src_lang>.srt file into all target languages.
+    Writes outputs to captions/<video>.<tgt_lang>.srt.
     """
-    srt_path = video_path.with_suffix(".srt")
-    if not srt_path.exists():
-        print(f"❌ No SRT found for {video_path.name}. Run `vaio audio {video_path.name}` first.")
+    captions_dir = video_path.parent / "captions"
+    if not captions_dir.exists():
+        print(f"❌ No 'captions' directory found next to {video_path.name}.")
+        print(f"   Run `vaio audio \"{video_path.name}\"` first to generate captions.")
         sys.exit(1)
 
-    base_content = read_text(srt_path)
-    print(f"🌍 Translating captions from {SOURCE_LANGUAGE} → {', '.join(TARGET_LANGUAGES.values())}")
+    # Find source SRT: captions/<stem>.<xx>.srt (e.g., .ru.srt, .en.srt)
+    stem = video_path.stem
+    candidates = sorted(captions_dir.glob(f"{stem}.*.srt"))
+
+    if not candidates:
+        print(f"❌ No captions found for {video_path.name} in '{captions_dir}'.")
+        print(f"   Expected pattern: captions/{stem}.<lang>.srt  (e.g., {stem}.ru.srt)")
+        sys.exit(1)
+
+    # Prefer file that matches SOURCE_LANGUAGE if possible, else take the first
+    pref_code = (SOURCE_LANGUAGE or "").lower()[:2]
+    base_srt = None
+    for c in candidates:
+        # infer language code from filename suffixes: <stem>.<code>.srt
+        # Path.suffixes example: ['.ru', '.srt'] → code = 'ru'
+        try:
+            code_guess = c.suffixes[-2].lstrip(".")
+        except Exception:
+            code_guess = ""
+        if code_guess == pref_code:
+            base_srt = c
+            break
+    if base_srt is None:
+        base_srt = candidates[0]
+        try:
+            pref_code = base_srt.suffixes[-2].lstrip(".")
+        except Exception:
+            pref_code = "ru"  # fallback display only
+
+    base_content = read_text(base_srt)
+    print(f"🌍 Translating captions ({base_srt.name}) "
+          f"from {SOURCE_LANGUAGE} → {', '.join(TARGET_LANGUAGES.values())}")
 
     results = {}
     with cf.ThreadPoolExecutor(max_workers=CONCURRENCY) as ex:
         futures = {}
         for code, lang in TARGET_LANGUAGES.items():
-            out_file = video_path.with_name(f"{video_path.stem}.{code}.srt")
-            futures[ex.submit(translate_one, base_content, SOURCE_LANGUAGE, code, lang, out_file)] = (
+            out_file = captions_dir / f"{stem}.{code}.srt"
+            futures[ex.submit(
+                translate_one,
+                base_content,
+                SOURCE_LANGUAGE,
                 code,
                 lang,
-                out_file,
-            )
+                out_file
+            )] = (code, lang, out_file)
 
         for fut in cf.as_completed(futures):
             code, lang, _ = futures[fut]
@@ -135,11 +170,13 @@ def process(video_path: Path):
     # Update metadata
     meta = load_meta(video_path)
     meta["stage"] = "captions_translated"
+    meta["caption_source_lang"] = pref_code
     meta["caption_translations"] = {
         code: ("done" if ok else "failed") for code, ok in results.items()
     }
     save_meta(video_path, meta)
 
     print("\n✅ Caption translation complete.")
-    print("Translated .srt files saved next to the original video.")
+    print(f"Translated files saved under: {captions_dir}")
     return results
+

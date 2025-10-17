@@ -20,11 +20,13 @@ import ollama
 
 from .constants import (
     SOURCE_LANGUAGE,
+    SOURCE_LANGUAGE_CODE,
     OLLAMA_MODEL,
     TEMPERATURE,
     MAX_RETRIES,
     INITIAL_BACKOFF_S,
     META_FILENAME,
+    TMP_FILENAME
 )
 from .utils import read_text, write_text, load_meta, save_meta, confirm, ensure_dir
 
@@ -102,7 +104,7 @@ def process(video_path: Path, template_path: Path | None = None):
     Produces: description/td.<lang>.txt
     """
     # Detect language dynamically
-    lang_code = SOURCE_LANGUAGE.lower()
+    lang_code = SOURCE_LANGUAGE_CODE.lower()
     captions_path = video_path.parent / "captions" / f"{video_path.stem}.{lang_code}.srt"
     if not captions_path.exists():
         print(f"⚠️ No '{lang_code}' caption found. Searching for any caption variant...")
@@ -117,17 +119,29 @@ def process(video_path: Path, template_path: Path | None = None):
 
 
     captions = read_text(captions_path)
-
+    # 📋 TEMPLATE HANDLING
     if template_path and template_path.exists():
         template = read_text(template_path)
         print(f"📋 Using provided template: {template_path.name}")
     else:
-        print("⚠️ No template file detected.")
-        if not confirm("Continue without template and use default layout?"):
-            print("❌ Aborted. Provide a template (e.g. td_temp.txt) and rerun:")
-            print(f"   vaio desc \"{video_path.name}\" --template-file td_temp.txt")
-            sys.exit(0)
-        template = "<Hook and SEO optimized video description from captions>\n\n<Video description>"
+        # Try local and fallback paths
+        possible_paths = [
+            video_path.parent / TMP_FILENAME,
+            Path.cwd() / TMP_FILENAME,
+            Path.cwd() / "templates" / TMP_FILENAME,
+        ]
+        found = next((p for p in possible_paths if p.exists()), None)
+
+        if found:
+            print(f"📄 Found default template: {found}")
+            template = read_text(found)
+        else:
+            print("⚠️ No template file detected in common locations.")
+            if not confirm("Continue without template and use default layout?"):
+                print("❌ Aborted. Provide a template (e.g. td_temp.txt) and rerun:")
+                print(f"   vaio desc \"{video_path.name}\" --template-file td_temp.txt")
+                sys.exit(0)
+            template = "<Hook and SEO optimized video description from captions>\n\n<Video description>"
 
     print("🧠 Generating SEO title...")
     title_prompt = USER_PROMPT_TITLE.format(src_lang=SOURCE_LANGUAGE, captions=captions)

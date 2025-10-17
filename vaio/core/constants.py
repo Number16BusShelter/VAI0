@@ -18,8 +18,8 @@ PROJECT_LICENSE = "MIT"
 # ────────────────────────────────
 # 🌐 Language Configuration
 # ────────────────────────────────
-SOURCE_LANGUAGE = "Russian"
-SOURCE_LANGUAGE_CODE = "ru"
+SOURCE_LANGUAGE = "English"
+SOURCE_LANGUAGE_CODE = "en"
 
 # Supported target translations (ISO codes → human-readable)
 TARGET_LANGUAGES = {
@@ -31,6 +31,7 @@ TARGET_LANGUAGES = {
     "es": "Spanish",
     "fr": "French",
     "en": "English",
+    "ru": "Russian"
 }
 
 # ────────────────────────────────
@@ -40,6 +41,7 @@ TARGET_LANGUAGES = {
 WHISPER_MODEL = os.getenv("VAIO_WHISPER_MODEL", "large-v3-turbo")
 
 # Ollama model used for LLM operations
+OLLAMA_HOST= "http://localhost:11434"
 OLLAMA_MODEL = os.getenv("VAIO_MODEL", "gpt-oss")
 
 # Model behavior
@@ -63,6 +65,8 @@ CAPTION_EXTENSION = ".srt"
 # ────────────────────────────────
 # 📄 Prompts (shared across modules)
 # ────────────────────────────────
+TMP_FILENAME="tdtmp.txt"
+
 SYSTEM_PROMPT_TITLE = (
     "You are an expert in YouTube SEO, media marketing, and title optimization. "
     "Your task is to analyze captions (SRT) and produce a concise, catchy, "
