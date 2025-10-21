@@ -93,4 +93,5 @@ temp/
 test_*.*
 __test__/
 
-knowlage/
+knowledge/*
+data/*

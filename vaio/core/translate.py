@@ -17,7 +17,9 @@ from pathlib import Path
 import ollama
 from .constants import (
     SOURCE_LANGUAGE,
+    SOURCE_LANGUAGE_CODE,
     TARGET_LANGUAGES,
+
     OLLAMA_MODEL,
     TEMPERATURE,
     MAX_RETRIES,
@@ -31,7 +33,7 @@ from .utils import read_text, write_text, load_meta, save_meta
 # ────────────────────────────────
 # 🧠 Base Translation Logic
 # ────────────────────────────────
-SYSTEM_PROMPT = (
+TRANSLATE_DESCRIPTION__PROMPT = (
     "You are an expert in multilingual SEO, localization, and cultural adaptation. "
     "Follow these strict rules:\n"
     "1) Output ONLY the final translated and SEO-optimized text.\n"
@@ -39,9 +41,10 @@ SYSTEM_PROMPT = (
     "3) Preserve structure, formatting, and line breaks.\n"
     "4) Adapt naturally to cultural and linguistic norms.\n"
     "5) Use popular search phrases and idioms for natural SEO.\n"
+    "6) Some languages distinguish between rough and cut diamonds. Always refer to 'cut diamonds', unless the rough is clearly described!\n"
 )
 
-USER_PROMPT_TEMPLATE = (
+USER_TRANSLATE_PROMPT_TEMPLATE = (
     "Translate and optimize the following TITLE and DESCRIPTION from {src_lang} to {tgt_lang}. "
     "Preserve layout and formatting exactly.\n\n"
     "----- BEGIN CONTENT -----\n{content}\n----- END CONTENT -----"
@@ -81,11 +84,11 @@ def chat_with_retries(model: str, system_prompt: str, user_prompt: str) -> str:
 # ────────────────────────────────
 def translate_one(content: str, src_lang: str, code: str, lang: str, out_path: Path):
     """Translate one file and write result."""
-    user_prompt = USER_PROMPT_TEMPLATE.format(
+    user_prompt = USER_TRANSLATE_PROMPT_TEMPLATE.format(
         src_lang=src_lang, tgt_lang=lang, content=content
     )
     try:
-        translated = chat_with_retries(OLLAMA_MODEL, SYSTEM_PROMPT, user_prompt)
+        translated = chat_with_retries(OLLAMA_MODEL, TRANSLATE_DESCRIPTION__PROMPT, user_prompt)
         if not translated.strip():
             raise ValueError("Empty model response")
         write_text(out_path, translated)
@@ -105,11 +108,12 @@ def process(video_path: Path):
     """
     # Load metadata to detect real TD file and language
     meta = load_meta(video_path)
-    td_lang = meta.get("td_lang", SOURCE_LANGUAGE.lower()[:2])
+    td_lang = meta.get("td_lang", SOURCE_LANGUAGE_CODE)
 
     # Primary location: description/td.<lang>.txt
     desc_dir = video_path.parent / "description"
     base_td = desc_dir / f"td.{td_lang}.txt"
+    print(base_td)
 
     # Fallback search if not found
     if not base_td.exists():
