@@ -63,10 +63,14 @@ def handle_kb(args):
     # ────────────────────────────────
     # List KB
     # ────────────────────────────────
-    elif cmd == "list":
-        video = Path(args.video)
-        kb_dir = Path(args.knowledge).resolve() if args.knowledge else _resolve_kb_dir_for_video(video)
-        print(f"📚 Listing KB for {video.name} ...")
+
+    elif args.kb_cmd == "list":
+        # was: kb_dir = Path(args.knowledge)  <-- wrong
+        if not args.dir:
+            print("❌ --dir is required for 'kb list'")
+            return
+        kb_dir = Path(args.dir)
+        print(f"📚 Listing KB for {kb_dir} ...")
         debug_list_docs(kb_dir, limit=20)
 
     # ────────────────────────────────

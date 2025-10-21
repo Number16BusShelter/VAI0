@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from llama_index.core import VectorStoreIndex
+from llama_index.core import VectorStoreIndex, Document
 from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 from .store import get_index
 from .paths import ensure_default_dirs, DEFAULT_KB_DIR
@@ -8,26 +8,45 @@ from .store import build_index, get_index, collection_stats
 from .loader import load_documents
 from vaio.core.utils import load_meta, save_meta  # reuse existing meta IO
 
+# query.py  (replace the build_kb_for_video + helper with the following)
+
+from .loader import load_documents, read_file  # import read_file
+
 IGNORE_NAMES = {
-    ".DS_Store",
-    ".gitkeep",
-    ".gitignore",
-    ".env",
-    "__pycache__",
-    "node_modules",
-    "tmp",
-    "venv",
+    ".DS_Store", ".gitkeep", ".gitignore", ".env",
+    "__pycache__", "node_modules", "tmp", "venv",
+}
+IGNORE_EXTENSIONS = {
+    ".db", ".sqlite", ".lock", ".log", ".bak", ".tmp", ".old",
 }
 
-IGNORE_EXTENSIONS = {
-    ".db",
-    ".sqlite",
-    ".lock",
-    ".log",
-    ".bak",
-    ".tmp",
-    ".old",
-}
+def _iter_valid_files(kb_dir: Path) -> list[Path]:
+    files = []
+    for f in kb_dir.glob("**/*"):
+        if not f.is_file():
+            continue
+        if f.name.startswith(".") or f.name in IGNORE_NAMES:
+            continue
+        if f.suffix.lower() in IGNORE_EXTENSIONS:
+            continue
+        files.append(f)
+    return files
+
+def _docs_from_files(files: list[Path]) -> list[Document]:
+    docs: list[Document] = []
+    for f in files:
+        try:
+            text = read_file(f).strip()
+            if not text:
+                continue
+            docs.append(Document(
+                text=text,
+                metadata={"source": str(f), "category": "marketing"},
+            ))
+        except Exception as e:
+            print(f"⚠️ Skipped {f.name}: {e}")
+    return docs
+
 
 # ────────────────────────────────
 # 🔍 Internal KB resolution
@@ -94,41 +113,30 @@ def build_kb_for_video(video_path: Path, kb_dir: Path | None = None) -> dict:
     kb = Path(kb)
     kb.mkdir(parents=True, exist_ok=True)
 
-    # 🧩 Collect all valid documents, skipping hidden/system/ignored
-    all_files = list(kb.glob("**/*"))
-    valid_files = []
-    for f in all_files:
-        if not f.is_file():
-            continue
-        if f.name.startswith("."):  # hidden
-            continue
-        if f.name in IGNORE_NAMES:
-            continue
-        if f.suffix.lower() in IGNORE_EXTENSIONS:
-            continue
-        # extra safety for macOS junk files
-        if f.name.lower().endswith(".ds_store") or "._" in f.name:
-            continue
-        valid_files.append(f)
-
+    # 1) filter at the filesystem level
+    valid_files = _iter_valid_files(kb)
     if not valid_files:
         print(f"⚠️ No valid documents found in {kb}")
         return {"status": "empty", "count": 0, "kb": str(kb)}
 
-    print(f"📂 Found {len(valid_files)} valid knowledge files:")
+    print("📂 Found {} valid knowledge files:".format(len(valid_files)))
     for vf in valid_files:
-        print(f"  - {vf.relative_to(kb)}")
+        try:
+            print(f"  - {vf.relative_to(kb)}")
+        except Exception:
+            print(f"  - {vf}")
 
-    # ✅ Load full directory (ensures metadata is uniform)
-    docs = load_documents(kb)
+    # 2) load exactly these files (NO parent directory scanning)
+    docs = _docs_from_files(valid_files)
     if not docs:
         print(f"⚠️ No readable documents after filtering in {kb}")
         return {"status": "empty", "count": 0, "kb": str(kb)}
 
+    # 3) build index
     build_index(kb, docs)
     stats = collection_stats(kb)
-    print(f"✅ Built index with {stats['count']} documents from {kb}")
-    return {"status": "built", "count": stats['count'], "kb": str(kb)}
+    return {"status": "built", "count": stats["count"], "kb": str(kb)}
+
 
 
 def load_documents_from_list(files: list[Path]):
