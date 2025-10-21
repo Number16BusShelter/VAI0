@@ -31,18 +31,47 @@ def _get_local_client(kb_dir: Path) -> chromadb.Client:
     return chromadb.PersistentClient(path=str(chroma_path))
 
 
+def debug_list_docs(kb_dir: Path, limit: int = 20):
+    """
+    Print the current stored documents in the Chroma collection.
+    Useful for verifying duplicates or inspecting chunks.
+    """
+    try:
+        client = _get_local_client(kb_dir)
+        coll = client.get_or_create_collection("vaio_kb")
+
+        count = coll.count()
+        print(f"📊 Collection: {coll.name} | Total: {count}")
+
+        # Retrieve raw entries from Chroma
+        data = coll.get(include=["documents", "metadatas", "embeddings"])
+
+        # Some clients paginate, so limit manually
+        for i, doc_text in enumerate(data.get("documents", [])[:limit]):
+            meta = data.get("metadatas", [{}])[i]
+            print(f"\n🧩 Doc #{i+1}")
+            print(f"  Metadata: {meta}")
+            print(f"  Text: {doc_text[:300]!r}...")
+    except Exception as e:
+        print(f"⚠️ Debug list failed: {e}")
+
+
 
 # ────────────────────────────────
 # 🧠 BUILD INDEX
 # ────────────────────────────────
 def build_index(kb_dir: Path, documents: list[Document]):
     client = _get_local_client(kb_dir)
-    collection = client.get_or_create_collection("vaio_kb")
+    collection_name = "vaio_kb"
 
-    vs = ChromaVectorStore(
-        chroma_collection=collection,
-        client=client,
-    )
+    # 🧹 Clear previous collection before rebuild
+    existing = [c.name for c in client.list_collections()]
+    if collection_name in existing:
+        client.delete_collection(collection_name)
+        print(f"🗑️  Old collection '{collection_name}' removed before rebuild.")
+
+    collection = client.get_or_create_collection(collection_name)
+    vs = ChromaVectorStore(chroma_collection=collection, client=client)
 
     storage = StorageContext.from_defaults(vector_store=vs)
     VectorStoreIndex.from_documents(
@@ -91,11 +120,26 @@ def clear_index(kb_dir: Path):
 # 📊 STATS
 # ────────────────────────────────
 def collection_stats(kb_dir: Path) -> dict:
+    print(kb_dir)
+    """
+    Return basic info about the Chroma collection for a given KB.
+    """
     try:
         client = _get_local_client(kb_dir)
         coll = client.get_or_create_collection("vaio_kb")
-        return {"count": coll.count()}
+        print(coll)
+        count = coll.count()
+        storage_path = (Path(client._settings.persist_path)  # type: ignore
+                        if hasattr(client, "_settings") else None)
+        return {
+            "collection": coll.name,
+            "count": count,
+            "storage": str(storage_path or "unknown"),
+        }
     except Exception as e:
         print(f"⚠️ Could not read stats: {e}")
-        return {"count": 0}
-
+        return {
+            "collection": "vaio_kb",
+            "count": 0,
+            "storage": "unavailable",
+        }

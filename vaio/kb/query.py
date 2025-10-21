@@ -8,6 +8,27 @@ from .store import build_index, get_index, collection_stats
 from .loader import load_documents
 from vaio.core.utils import load_meta, save_meta  # reuse existing meta IO
 
+IGNORE_NAMES = {
+    ".DS_Store",
+    ".gitkeep",
+    ".gitignore",
+    ".env",
+    "__pycache__",
+    "node_modules",
+    "tmp",
+    "venv",
+}
+
+IGNORE_EXTENSIONS = {
+    ".db",
+    ".sqlite",
+    ".lock",
+    ".log",
+    ".bak",
+    ".tmp",
+    ".old",
+}
+
 # ────────────────────────────────
 # 🔍 Internal KB resolution
 # ────────────────────────────────
@@ -49,6 +70,17 @@ def load_kb_if_available(video_path: Path) -> VectorStoreIndex | None:
         return None
 
 
+def iter_knowledge_files(kb_dir: Path):
+    """Yield valid knowledge files, skipping system and hidden files."""
+    for path in kb_dir.glob("**/*"):
+        if not path.is_file():
+            continue
+        # Skip hidden/system files
+        if path.name.startswith(".") or path.suffix.lower() in {".db", ".sqlite", ".lock"}:
+            continue
+        yield path
+        
+
 def build_kb_for_video(video_path: Path, kb_dir: Path | None = None) -> dict:
     """
     Build (or rebuild) the KB for this project video.
@@ -61,15 +93,56 @@ def build_kb_for_video(video_path: Path, kb_dir: Path | None = None) -> dict:
 
     kb = Path(kb)
     kb.mkdir(parents=True, exist_ok=True)
+
+    # 🧩 Collect all valid documents, skipping hidden/system/ignored
+    all_files = list(kb.glob("**/*"))
+    valid_files = []
+    for f in all_files:
+        if not f.is_file():
+            continue
+        if f.name.startswith("."):  # hidden
+            continue
+        if f.name in IGNORE_NAMES:
+            continue
+        if f.suffix.lower() in IGNORE_EXTENSIONS:
+            continue
+        # extra safety for macOS junk files
+        if f.name.lower().endswith(".ds_store") or "._" in f.name:
+            continue
+        valid_files.append(f)
+
+    if not valid_files:
+        print(f"⚠️ No valid documents found in {kb}")
+        return {"status": "empty", "count": 0, "kb": str(kb)}
+
+    print(f"📂 Found {len(valid_files)} valid knowledge files:")
+    for vf in valid_files:
+        print(f"  - {vf.relative_to(kb)}")
+
+    # ✅ Load full directory (ensures metadata is uniform)
     docs = load_documents(kb)
     if not docs:
-        print(f"⚠️ No documents found in {kb}")
+        print(f"⚠️ No readable documents after filtering in {kb}")
         return {"status": "empty", "count": 0, "kb": str(kb)}
 
     build_index(kb, docs)
     stats = collection_stats(kb)
-    return {"status": "built", "count": stats["count"], "kb": str(kb)}
+    print(f"✅ Built index with {stats['count']} documents from {kb}")
+    return {"status": "built", "count": stats['count'], "kb": str(kb)}
 
+
+def load_documents_from_list(files: list[Path]):
+    """
+    Legacy shim (kept for compatibility) — now loads unique parent directories.
+    """
+    parent_dirs = sorted({f.parent for f in files})
+    docs = []
+    for d in parent_dirs:
+        try:
+            docs.extend(load_documents(d))
+        except Exception as e:
+            print(f"⚠️ Skipped directory {d}: {e}")
+    return docs
 
 # ────────────────────────────────
 def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[dict]:
