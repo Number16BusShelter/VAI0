@@ -1,7 +1,11 @@
+chromadb==1.2.1
 kokoro==0.9.4
-numpy<2.0
+llama_index==0.14.5
+numpy==2.3.4
 ollama==0.6.0
 openai_whisper==20250625
+PyPDF2==3.0.1
+PyYAML==6.0.3
 Requests==2.32.5
 rich==14.2.0
 soundfile==0.13.1
