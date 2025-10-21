@@ -190,15 +190,25 @@ def _filters_for_task(task: str) -> MetadataFilters | None:
         return MetadataFilters(filters=[])  # no restriction
     return None
 
-def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[str]:
+def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[dict]:
     kb_dir = _resolve_kb_dir_for_video(video_path)
     if kb_dir is None:
         return []
+
     try:
         index: VectorStoreIndex = get_index(kb_dir)
         retriever = index.as_retriever(similarity_top_k=top_k)
         results = retriever.retrieve(query)
-        return [r.text for r in results]
+
+        return [
+            {
+                "text": r.text,
+                "source": r.metadata.get("source", "unknown"),
+                "score": getattr(r, "score", None),
+            }
+            for r in results
+        ]
+
     except Exception as e:
         print(f"⚠️ Retrieval failed: {e}")
         return []
