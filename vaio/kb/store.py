@@ -7,30 +7,43 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from .paths import DATA_DIR, kb_collection_name
 
-# Embedding model: fast, widely used, multilingual-friendly enough
-_EMB_MODEL = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# ────────────────────────────────
+# 📍 Directory setup
+# ────────────────────────────────
+DATA_ROOT = Path(__file__).resolve().parents[2] / "data" / "kb"
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
+
+_EMB_MODEL = HuggingFaceEmbedding(
+    model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
 
 # ────────────────────────────────
 # 📦 LOCAL CHROMA INITIALIZATION
 # ────────────────────────────────
-def _get_local_client(path: Path) -> chromadb.Client:
+def _get_local_client(kb_dir: Path) -> chromadb.Client:
     """
-    Always return a *local* Chroma persistent client.
-    This avoids HttpClient(None) errors and keeps data in local directory.
+    Store Chroma data in global data/kb/<kb_name> directory,
+    separate from the original knowledge source files.
     """
-    path.mkdir(parents=True, exist_ok=True)
-    return chromadb.PersistentClient(path=str(path))
+    kb_name = kb_dir.name or "default"
+    chroma_path = DATA_ROOT / kb_name
+    chroma_path.mkdir(parents=True, exist_ok=True)
+    return chromadb.PersistentClient(path=str(chroma_path))
+
 
 
 # ────────────────────────────────
 # 🧠 BUILD INDEX
 # ────────────────────────────────
 def build_index(kb_dir: Path, documents: list[Document]):
-    client = _get_local_client(kb_dir / "chroma")  # ensures folder exists
+    client = _get_local_client(kb_dir)
+    collection = client.get_or_create_collection("vaio_kb")
+
     vs = ChromaVectorStore(
-        chroma_collection=client.get_or_create_collection("vaio_kb"),
+        chroma_collection=collection,
         client=client,
     )
+
     storage = StorageContext.from_defaults(vector_store=vs)
     VectorStoreIndex.from_documents(
         documents,
@@ -38,16 +51,17 @@ def build_index(kb_dir: Path, documents: list[Document]):
         embed_model=_EMB_MODEL,
         show_progress=True,
     )
-    print(f"✅ Built index with {len(documents)} documents → {kb_dir}")
 
+    print(f"✅ Built index with {len(documents)} docs → {DATA_ROOT / kb_dir.name}")
 
 # ────────────────────────────────
 # 🧭 GET EXISTING INDEX
 # ────────────────────────────────
 def get_index(kb_dir: Path) -> VectorStoreIndex:
-    client = _get_local_client(kb_dir / "chroma")
+    client = _get_local_client(kb_dir)
+    collection = client.get_or_create_collection("vaio_kb")
     vs = ChromaVectorStore(
-        chroma_collection=client.get_or_create_collection("vaio_kb"),
+        chroma_collection=collection,
         client=client,
     )
     storage = StorageContext.from_defaults(vector_store=vs)
@@ -58,38 +72,30 @@ def get_index(kb_dir: Path) -> VectorStoreIndex:
     )
 
 
+
 # ────────────────────────────────
 # 🧹 CLEAR / RESET INDEX
 # ────────────────────────────────
 def clear_index(kb_dir: Path):
-    """
-    Completely remove the local Chroma collection for this KB.
-    This does not delete the documents themselves — only the vector index.
-    Safe to re-run build afterwards.
-    """
     try:
-        client = _get_local_client(kb_dir / "chroma")
-
-        # Chroma 0.4.x / 0.5.x compatibility
-        existing_names = [c.name for c in client.list_collections()]
-        if "vaio_kb" in existing_names:
+        client = _get_local_client(kb_dir)
+        names = [c.name for c in client.list_collections()]
+        if "vaio_kb" in names:
             client.delete_collection("vaio_kb")
-            print(f"🗑️  Deleted collection 'vaio_kb' in {kb_dir}/chroma")
+            print(f"🗑️  Deleted collection for KB: {kb_dir.name}")
         else:
-            print(f"ℹ️  No existing collection 'vaio_kb' found in {kb_dir}/chroma")
-
+            print(f"ℹ️  No collection found for {kb_dir.name}.")
     except Exception as e:
-        print(f"⚠️  Failed to clear index for {kb_dir}: {e}")
-
+        print(f"⚠️  Failed to clear index for {kb_dir.name}: {e}")
 # ────────────────────────────────
 # 📊 STATS
 # ────────────────────────────────
 def collection_stats(kb_dir: Path) -> dict:
     try:
-        client = _get_local_client(kb_dir / "chroma")
+        client = _get_local_client(kb_dir)
         coll = client.get_or_create_collection("vaio_kb")
         return {"count": coll.count()}
     except Exception as e:
-        print(f"⚠️ Could not load stats: {e}")
+        print(f"⚠️ Could not read stats: {e}")
         return {"count": 0}
 

@@ -4,7 +4,7 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from pathlib import Path
-from .query import build_kb_for_video, set_kb_dir_for_video
+from .query import build_kb_for_video, set_kb_dir_for_video, _resolve_kb_dir_for_video
 from .paths import DEFAULT_KB_DIR, ensure_default_dirs
 from .store import collection_stats, clear_index
 
@@ -50,18 +50,14 @@ def handle_kb(args):
             set_kb_dir_for_video(video, kb_dir)
             print(f"✅ KB directory set to {kb_dir}")
     elif cmd == "stats":
-        from .query import _resolve_kb_dir_for_video
         kb_dir = _resolve_kb_dir_for_video(Path(args.video))
         if kb_dir is None:
             print("ℹ️  KB disabled (knowledge=null).")
             return
         stats = collection_stats(kb_dir)
         print(f"📊 KB collection={stats['collection']} | docs={stats['count']} | dir={kb_dir}")
-    elif cmd == "clear":
-        from .query import _resolve_kb_dir_for_video
+    elif args.kb_cmd == "clear":
+        from .store import clear_index
         kb_dir = _resolve_kb_dir_for_video(Path(args.video))
-        if kb_dir is None:
-            print("ℹ️  KB disabled; nothing to clear.")
-            return
         clear_index(kb_dir)
-        print(f"🧹 Cleared KB index for dir={kb_dir}")
+        return

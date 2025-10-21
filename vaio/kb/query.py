@@ -9,22 +9,16 @@ from .loader import load_documents
 from vaio.core.utils import load_meta, save_meta  # reuse existing meta IO
 
 # ────────────────────────────────
-# 📂 Path resolution
+# 🔍 Internal KB resolution
 # ────────────────────────────────
 def _resolve_kb_dir_for_video(video_path: Path) -> Path | None:
-    """
-    Decide which knowledge dir to use.
-    - If project meta (<project>.vaio.json) has "knowledge": use that (or None).
-    - Else use default <repo_root>/knowledge/default (auto-create).
-    """
+    from .paths import DEFAULT_KB_DIR
     ensure_default_dirs()
-    meta = load_meta(video_path)  # existing VAIO helper
+    meta = load_meta(video_path)
     kb_value = meta.get("knowledge", "__unset__")
     if kb_value == "__unset__":
-        # Not set yet: default to <repo_root>/knowledge/default
         return DEFAULT_KB_DIR
     if kb_value in (None, "", "null"):
-        # Explicitly disabled
         return None
     return Path(kb_value)
 
@@ -77,18 +71,28 @@ def build_kb_for_video(video_path: Path, kb_dir: Path | None = None) -> dict:
     return {"status": "built", "count": stats["count"], "kb": str(kb)}
 
 
-def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[str]:
-    """
-    Retrieve top-K relevant text chunks from the knowledge base.
-    Returns a list of text snippets.
-    """
-    kb = _resolve_kb_dir_for_video(video_path)
-    if kb is None:
+# ────────────────────────────────
+def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[dict]:
+    kb_dir = _resolve_kb_dir_for_video(video_path)
+    if kb_dir is None:
         return []
-    index: VectorStoreIndex = get_index(kb)
-    retriever = index.as_retriever(similarity_top_k=top_k)
-    results = retriever.retrieve(query)
-    return [r.text for r in results]
+
+    try:
+        index: VectorStoreIndex = get_index(kb_dir)
+        retriever = index.as_retriever(similarity_top_k=top_k)
+        results = retriever.retrieve(query)
+        # keep structured output for metadata
+        return [
+            {
+                "text": r.text,
+                "source": r.metadata.get("source", "unknown"),
+                "score": getattr(r, "score", None),
+            }
+            for r in results
+        ]
+    except Exception as e:
+        print(f"⚠️ Retrieval failed: {e}")
+        return []
 
 
 # ────────────────────────────────
@@ -121,23 +125,33 @@ def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[str]:
 
 def inject_context(video_path: Path, user_prompt: str, task: str = "desc") -> str:
     """
-    Retrieve relevant knowledge chunks based on the user prompt and task.
-    Uses LlamaIndex retriever abstraction for compatibility with all Chroma versions.
+    Retrieves relevant KB snippets and appends them to the LLM prompt.
+    Applies confidence threshold + source tracing for debugging clarity.
     """
     kb_dir = _resolve_kb_dir_for_video(video_path)
     if kb_dir is None:
         return user_prompt
 
     try:
-        index = get_index(kb_dir)
-        retriever = index.as_retriever(similarity_top_k=3)
         query = f"{task} context: {user_prompt[:400]}"
-        results = retriever.retrieve(query)
-
+        results = retrieve(video_path, query, top_k=5)
         if not results:
             return user_prompt
 
-        context_text = "\n\n".join(r.text for r in results if r.text)
+        # Confidence threshold filter
+        filtered = [
+            r for r in results if r["score"] is None or r["score"] > 0.35
+        ]
+        if not filtered:
+            return user_prompt
+
+        # Annotate each source
+        context_blocks = [
+            f"[{r['source']}] {r['text']}" for r in filtered if r.get("text")
+        ]
+        context_text = "\n\n".join(context_blocks)
+
+        print(f"📚 Injected {len(filtered)} KB snippets into prompt.")
         return f"{user_prompt}\n\n---\nContext (from KB):\n{context_text}\n---"
 
     except Exception as e:
@@ -145,16 +159,19 @@ def inject_context(video_path: Path, user_prompt: str, task: str = "desc") -> st
         return user_prompt
 
 
-    
 def build_if_needed(video_path: Path):
     """
-    Optional helper: on first use, if collection is empty but kb_dir has files,
-    build the index automatically.
+    Automatically build the KB if it exists but has no indexed documents.
     """
-    kb = _resolve_kb_dir_for_video(video_path)
-    if kb is None:
-        return
     from .store import collection_stats
-    stats = collection_stats(kb)
-    if stats["count"] == 0 and any(kb.iterdir()):
-        build_kb_for_video(video_path, kb)
+    from .store import build_index
+    from .loader import load_documents
+
+    kb_dir = _resolve_kb_dir_for_video(video_path)
+    if kb_dir is None:
+        return
+
+    stats = collection_stats(kb_dir)
+    if stats["count"] == 0 and any(kb_dir.iterdir()):
+        docs = load_documents(kb_dir)
+        build_index(kb_dir, docs)
