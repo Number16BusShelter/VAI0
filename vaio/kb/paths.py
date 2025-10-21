@@ -1,22 +1,14 @@
 from __future__ import annotations
 from pathlib import Path
-import hashlib
 
-# Repo root: two levels up from this file (vaio/kb/…)
+# repo root = VAI0/
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-DEFAULT_KB_DIR = REPO_ROOT / "knowledge" / "default"
-print("DEFAULT_KB_DIR", DEFAULT_KB_DIR)
-DATA_DIR = REPO_ROOT / "data" / "kb"    # chroma persistence root
-
+# All KB lives under <repo_root>/kb
+BASE_KB_ROOT = REPO_ROOT / "kb"
+DEFAULT_KB_DIR = BASE_KB_ROOT / "default"
 DEFAULT_EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 DEFAULT_CHROMA_DIR = "data/kb"
 
-def ensure_default_dirs():
+def ensure_default_dirs() -> None:
     DEFAULT_KB_DIR.mkdir(parents=True, exist_ok=True)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-def kb_collection_name(kb_dir: Path) -> str:
-    """Stable per-knowledge-dir collection name."""
-    key = str(kb_dir.resolve()).encode("utf-8")
-    return "kb_" + hashlib.md5(key).hexdigest()[:16]

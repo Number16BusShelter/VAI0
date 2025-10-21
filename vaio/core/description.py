@@ -239,29 +239,20 @@ def load_inputs(video_path: Path, template_path: Path | None = None) -> InputDat
 # 🧠 KNOWLEDGE BASE
 # ────────────────────────────────
 def prepare_kb(video_path: Path):
-    """Build and validate KB context."""
     from vaio.kb.query import build_if_needed, load_kb_if_available, _resolve_kb_dir_for_video
     from vaio.kb.store import collection_stats
 
     try:
-        # 🔹 Force KB directory into repo_root/data/kb
-        repo_root = Path(__file__).resolve().parents[2]
-        global_kb_dir = repo_root / "data" / "kb"
-        global_kb_dir.mkdir(parents=True, exist_ok=True)
-
-        build_if_needed(global_kb_dir)
-        kb_index = load_kb_if_available(global_kb_dir)
-
-        if kb_index and global_kb_dir.exists():
-            stats = collection_stats(global_kb_dir)
-            print(f"🧠 KB active: {stats['collection']} ({stats['count']} docs)")
+        build_if_needed(video_path)  # uses DEFAULT_KB_DIR internally when enabled
+        kb_index = load_kb_if_available(video_path)
+        kb_dir = _resolve_kb_dir_for_video(video_path)
+        if kb_index and kb_dir and kb_dir.exists():
+            stats = collection_stats(kb_dir)
+            print(f"🧠 KB active: {stats['collection']} ({stats['count']} docs) dir={stats['dir']}")
             return stats
-        else:
-            print("⚠️ KB not loaded or empty. Continuing without contextual enrichment.")
-            return None
+        print("⚠️ KB not loaded or empty. Continuing without contextual enrichment.")
     except Exception as e:
         print(f"⚠️ KB preparation skipped: {e}")
-        return None
 
 
 

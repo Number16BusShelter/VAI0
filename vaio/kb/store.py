@@ -1,8 +1,14 @@
 from __future__ import annotations
+from pathlib import Path
+from typing import Iterable, Union, Optional, List
 
+import chromadb
+from llama_index.core import VectorStoreIndex, Settings, StorageContext, Document
+from llama_index.vector_stores.chroma import ChromaVectorStore
+
+from .paths import BASE_KB_ROOT, DEFAULT_KB_DIR, ensure_default_dirs
 import os
 import torch
-from pathlib import Path
 import chromadb
 from chromadb import PersistentClient
 from chromadb.config import Settings as ChromaSettings
@@ -10,7 +16,15 @@ from typing import Optional
 from llama_index.core import Settings, VectorStoreIndex, StorageContext, Document
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
-from .paths import DATA_DIR, kb_collection_name, DEFAULT_CHROMA_DIR, DEFAULT_EMBED_MODEL
+from .paths import DEFAULT_EMBED_MODEL
+from llama_index.core import Settings
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+# Use your existing local model
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name=DEFAULT_EMBED_MODEL
+)
+Settings.llm = None  # Disable any default LLM calls
 
 _EMBED_MODEL_INITIALIZED = False
 
@@ -30,9 +44,6 @@ CACHE_DIR = Path("data/kb_cache")
 # ────────────────────────────────
 # 📦 LOCAL CHROMA INITIALIZATION
 # ────────────────────────────────
-from llama_index.core import Settings
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from .paths import DEFAULT_EMBED_MODEL
 
 def init_embed_model(model_name: str | None = None):
     """
@@ -82,16 +93,45 @@ def sanitize_collection_name(name: str) -> str:
     return base[:128]  # keep under limit
 
 
-def get_chroma_collection(kb_name: str, base_dir: str = DEFAULT_CHROMA_DIR):
-    # sanitize name to avoid validation errors
-    safe_name = sanitize_collection_name(str(kb_name))
-    persist_dir = str(Path(base_dir) / safe_name)
+# -----------------------------------------------------------------------------
+# Persist path resolver
+# -----------------------------------------------------------------------------
+def _persist_path(kb: Union[str, Path, None]) -> Path:
+    """
+    Resolve the on-disk directory where Chroma should persist.
+    Rules:
+      - None -> DEFAULT_KB_DIR  (<repo_root>/kb/default)
+      - Path -> use AS-IS (absolute or relative to CWD)
+      - "default" -> <repo_root>/kb/default
+      - any other string (e.g., "clientA") -> <repo_root>/kb/<string>
+      - strings with slashes (e.g., "kb/default") are treated as explicit paths.
+    """
+    ensure_default_dirs()
 
-    client = chromadb.PersistentClient(
-        path=persist_dir,
-        settings=ChromaSettings(allow_reset=True)
-    )
-    return client.get_or_create_collection(name=safe_name, metadata={"kb_name": safe_name})
+    if kb is None:
+        return DEFAULT_KB_DIR
+
+    if isinstance(kb, Path):
+        return kb
+
+    # string
+    s = kb.strip()
+    p = Path(s)
+    if p.is_absolute() or len(p.parts) > 1:
+        return p  # treat as explicit path like "kb/default"
+    if s == "default":
+        return DEFAULT_KB_DIR
+    return BASE_KB_ROOT / s  # e.g., "clientA" -> <repo_root>/kb/clientA
+
+
+
+def get_chroma_collection(persist: Union[str, Path, None], collection_name: str = "vaio_kb"):
+    """
+    Open (or create) a Chroma collection at the given persist directory.
+    """
+    persist_dir = _persist_path(persist)
+    client = chromadb.PersistentClient(path=str(persist_dir))
+    return client.get_or_create_collection(name=collection_name)
 
 
 def _get_local_client(kb_dir: Path) -> chromadb.Client:
@@ -134,67 +174,40 @@ def debug_list_docs(kb_dir: Path, limit: int = 20):
 # ────────────────────────────────
 # 🧠 BUILD INDEX
 # ────────────────────────────────
-def build_index(kb_name_or_dir, documents):
+def build_index(kb_name_or_dir: Union[str, Path, None], documents: Iterable[Document]) -> VectorStoreIndex:
     """
-    Build or update a ChromaDB index for the given KB and documents.
-
-    Accepts either:
-      - kb_name (str)
-      - kb_dir (Path or list[str])
-      - or legacy list input (['knowledge/default'])
+    Build or extend an index at the resolved persist path.
+    Accepts: "default" | "clientName" | Path("/.../kb/default") | None
     """
-    # 🔹 Ensure embedding model initialized before any vector ops
-    init_embed_model()
+    ensure_default_dirs()
+    persist_dir = _persist_path(kb_name_or_dir)
 
-    # Normalize input type
-    if isinstance(kb_name_or_dir, (list, tuple)):
-        kb_name = str(kb_name_or_dir[0])
-    elif isinstance(kb_name_or_dir, Path):
-        kb_name = kb_name_or_dir.stem
-    elif isinstance(kb_name_or_dir, str):
-        kb_name = kb_name_or_dir
-    else:
-        raise TypeError(f"Unsupported type for kb_name_or_dir: {type(kb_name_or_dir)}")
-
-    # Optional: fallback safeguard
-    if not getattr(Settings, "embed_model", None):
-        init_embed_model()
-
-    collection = get_chroma_collection(kb_name)
+    collection = get_chroma_collection(persist_dir)
     vector_store = ChromaVectorStore(chroma_collection=collection)
     storage_ctx = StorageContext.from_defaults(vector_store=vector_store)
 
-    # Build or extend the index
     index = VectorStoreIndex.from_documents(
         documents,
         storage_context=storage_ctx,
         show_progress=True,
     )
-
-    count = collection.count()
-    print(f"✅ Built KB index '{kb_name}' with {count} chunks stored.")
+    print(f"✅ Built KB index at {persist_dir} (collection={collection.name}, count={collection.count()})")
     return index
 
 
 # ────────────────────────────────
 # 🧭 GET EXISTING INDEX
 # ────────────────────────────────
-def open_index(kb_name: str) -> VectorStoreIndex:
+def open_index(kb_name_or_dir: Union[str, Path, None]) -> VectorStoreIndex:
     """
-    Load an existing KB index by name. Ensures local embedding model is active.
+    Open an existing index at the resolved persist path.
     """
-    # 🔹 Always make sure we’re using local embeddings
-    init_embed_model()
-
-    collection = get_chroma_collection(kb_name)
+    persist_dir = _persist_path(kb_name_or_dir)
+    collection = get_chroma_collection(persist_dir)
     vector_store = ChromaVectorStore(chroma_collection=collection)
     storage_ctx = StorageContext.from_defaults(vector_store=vector_store)
+    return VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_ctx)
 
-    index = VectorStoreIndex.from_vector_store(
-        vector_store,
-        storage_context=storage_ctx,
-    )
-    return index
 
 def get_index(kb_dir: Path) -> VectorStoreIndex:
     client = _get_local_client(kb_dir)
@@ -213,43 +226,30 @@ def get_index(kb_dir: Path) -> VectorStoreIndex:
 
 
 # ────────────────────────────────
-# 🧹 CLEAR / RESET INDEX
-# ────────────────────────────────
-def clear_index(kb_dir: Path):
-    try:
-        client = _get_local_client(kb_dir)
-        names = [c.name for c in client.list_collections()]
-        if "vaio_kb" in names:
-            client.delete_collection("vaio_kb")
-            print(f"🗑️  Deleted collection for KB: {kb_dir.name}")
-        else:
-            print(f"ℹ️  No collection found for {kb_dir.name}.")
-    except Exception as e:
-        print(f"⚠️  Failed to clear index for {kb_dir.name}: {e}")
-# ────────────────────────────────
 # 📊 STATS
 # ────────────────────────────────
-def collection_stats(kb_dir: Path) -> dict:
-    print(kb_dir)
-    """
-    Return basic info about the Chroma collection for a given KB.
-    """
+
+def collection_stats(kb_name_or_dir: Union[str, Path, None]) -> dict:
+    persist_dir = _persist_path(kb_name_or_dir)
+    collection = get_chroma_collection(persist_dir)
+    return {
+        "collection": collection.name,
+        "count": collection.count(),
+        "dir": str(persist_dir),
+    }
+
+def clear_index(kb_name_or_dir: Union[str, Path, None]) -> None:
+    persist_dir = _persist_path(kb_name_or_dir)
+    client = chromadb.PersistentClient(path=str(persist_dir))
     try:
-        client = _get_local_client(kb_dir)
-        coll = client.get_or_create_collection("vaio_kb")
-        print(coll)
-        count = coll.count()
-        storage_path = (Path(client._settings.persist_path)  # type: ignore
-                        if hasattr(client, "_settings") else None)
-        return {
-            "collection": coll.name,
-            "count": count,
-            "storage": str(storage_path or "unknown"),
-        }
-    except Exception as e:
-        print(f"⚠️ Could not read stats: {e}")
-        return {
-            "collection": "vaio_kb",
-            "count": 0,
-            "storage": "unavailable",
-        }
+        client.delete_collection("vaio_kb")
+        print(f"🧹 Deleted collection 'vaio_kb' at {persist_dir}")
+    except Exception:
+        pass
+
+
+def debug_list_docs(kb_name_or_dir: Union[str, Path, None], limit: int = 20) -> None:
+    persist_dir = _persist_path(kb_name_or_dir)
+    collection = get_chroma_collection(persist_dir)
+    ids = collection.get(include=["documents", "metadatas"]).get("ids", [])
+    print(f"📚 Collection={collection.name} docs={len(ids)} dir={persist_dir}")

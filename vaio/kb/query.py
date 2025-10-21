@@ -74,14 +74,18 @@ def _docs_from_files(files: list[Path]) -> list[Document]:
 # 🔍 Internal KB resolution
 # ────────────────────────────────
 def _resolve_kb_dir_for_video(video_path: Path) -> Path | None:
-    from .paths import DEFAULT_KB_DIR
+    """
+    If project metadata sets 'knowledge' to a path/string, use it;
+    otherwise use the global default <repo_root>/kb/default.
+    """
     ensure_default_dirs()
+    from vaio.core.utils import load_meta
     meta = load_meta(video_path)
     kb_value = meta.get("knowledge", "__unset__")
+    if kb_value in ("none", "null", None, "", False):
+        return None
     if kb_value == "__unset__":
         return DEFAULT_KB_DIR
-    if kb_value in (None, "", "null"):
-        return None
     return Path(kb_value)
 
 
@@ -131,7 +135,6 @@ def build_kb_for_video(video_path: Path, kb_dir: Path | None = None) -> dict:
     kb = kb_dir if kb_dir is not None else _resolve_kb_dir_for_video(video_path)
     if kb is None:
         return {"status": "disabled", "count": 0, "kb": None}
-
     kb = Path(kb)
     kb.mkdir(parents=True, exist_ok=True)
 
