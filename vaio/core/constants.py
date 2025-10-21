@@ -18,8 +18,8 @@ PROJECT_LICENSE = "MIT"
 # ────────────────────────────────
 # 🌐 Language Configuration
 # ────────────────────────────────
-SOURCE_LANGUAGE = "English"
-SOURCE_LANGUAGE_CODE = "en"
+SOURCE_LANGUAGE = "Russian"
+SOURCE_LANGUAGE_CODE = "ru"
 
 # Supported target translations (ISO codes → human-readable)
 TARGET_LANGUAGES = {

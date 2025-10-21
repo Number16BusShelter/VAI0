@@ -6,6 +6,7 @@ Stage 5 — Text-to-Speech (TTS) Generation
 Converts multilingual caption (.srt) files into MP3 narrations
 using Kokoro-TTS (local, offline).
 
+
 Usage:
   vaio tts <video.mp4>
 """
@@ -146,6 +147,7 @@ def collect_audio_from_generator(gen):
 
     waveform = np.concatenate(chunks, axis=0)
     return waveform, int(sr)
+
 
 
 # ────────────────────────────────

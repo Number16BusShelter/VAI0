@@ -2,39 +2,184 @@
 # Project: VAIO — Video Auto Intelligence Operator
 # Version: 1.0.0
 # Author: AXID.ONE
-# Repository: https://github.com/number16busshelter/VAI0
-# Description: 
-VAIO (Video Auto Intelligence Operator) is a modular CLI framework for automating
-AI-driven video post-production workflows entirely offline.
+# Repository: https://github.com/Number16BusShelter/VAI0
 
-The pipeline performs:
+──────────────────────────────────────────────
+🧠  Overview
+──────────────────────────────────────────────
+
+VAIO (Video Auto Intelligence Operator) is a modular, offline-first
+CLI framework for automating AI-assisted video post-production.
+
+It supports full and partial automation of:
 1. 🎧 Audio extraction via FFmpeg
-2. 💬 Caption generation via Whisper (local)
-3. 📝 Title + description generation (SEO-optimized) via Ollama LLM
-4. 🌐 Multilingual translation of captions & metadata
-5. 🎙️ Voice narration synthesis using Kokoro-TTS
-6. 🧩 Stage management, rerun capability, and persistent metadata tracking
+2. 💬 Caption generation using Whisper (local)
+3. 🧠 SEO title + description generation via Ollama LLM
+4. 🌐 Multilingual translation of metadata and captions
+5. 🎙️ High-quality voice synthesis using Kokoro-TTS
+6. 🧩 Persistent metadata & rerun control via .vaio.json
+7. 📚 Context-aware enhancement via Knowledge Base (Chroma + LlamaIndex)
 
-All outputs are stored beside the source video (no project folders).
-Each stage can run independently or via the full-auto pipeline:
-    vaio ./video.mp4
-or step-by-step:
-    vaio audio video.mp4
-    vaio desc video.mp4 --template-file td_temp.txt
-    vaio translate video.mp4
-    vaio captions video.mp4
-    vaio tts video.mp4
+All outputs are stored beside the source video file.
+Each step can run independently or in sequence.
 
----
+Example:
+vaio ./video.mp4
+vaio audio ./video.mp4
+vaio desc ./video.mp4 --template-file tdtmp.txt
+vaio translate ./video.mp4
+vaio captions ./video.mp4
+vaio tts ./video.mp4
 
-## Key Technologies
-- **Python 3.12+**
-- **Ollama** – local LLM for SEO title/description generation
-- **Whisper (OpenAI)** – offline speech-to-text
-- **Kokoro-TTS** – lightweight multilingual text-to-speech (hexgrad/Kokoro)
-- **Rich** – CLI formatting and diagnostics
-- **FFmpeg** – audio extraction and MP3 encoding
+──────────────────────────────────────────────
+🏗️  Architecture
+──────────────────────────────────────────────
 
----
+VAIO is built around a modular operator model.
+Each operator (audio, desc, translate, captions, tts, etc.) is a stage
+that can read from and write to shared metadata under <video>.vaio.json.
 
-## Directory Overview
+Core layers:
+- vaio/core – base utilities, logging, metadata IO
+- vaio/stages – individual operator modules
+- vaio/kb – Knowledge Base integration layer (LlamaIndex + Chroma)
+- vaio/cli.py – command-line interface entrypoint
+- vaio/knowledge/default – default knowledge dataset (e.g. PDFs, docs)
+- data/kb – persisted vector indexes (Chroma storage)
+
+──────────────────────────────────────────────
+📚  Knowledge Base (KB)
+──────────────────────────────────────────────
+
+The Knowledge Base allows VAIO to contextualize LLM generations
+(description, translation, titles) with domain-specific documents
+(e.g. gemological guides, catalogs, API docs, etc.).
+
+Features:
+- Automatic indexing of all readable files (PDF, TXT, MD, JSON, YAML, CSV)
+- Ignored system files (.DS_Store, .git, .lock, etc.)
+- Stored embeddings using ChromaDB + LlamaIndex
+- Context retrieval during desc / translate stage
+
+Default setup:
+<repo_root>/knowledge/default/      ← raw reference materials
+<repo_root>/data/kb/               ← persistent Chroma vector store
+
+If no custom path is specified, VAIO uses knowledge/default.
+
+Configuration (in <video>.vaio.json):
+{
+  "knowledge": "/absolute/path/to/knowledge",
+  "language": "ru",
+  "title": "...",
+  "description": "..."
+}
+
+CLI examples:
+vaio kb set ./video.mp4 --knowledge ./knowledge/mydocs
+vaio kb build ./video.mp4
+vaio kb list ./video.mp4
+vaio kb stats ./video.mp4
+
+If "knowledge": null, no KB context will be used.
+
+──────────────────────────────────────────────
+🧩  Knowledge Base Flow
+──────────────────────────────────────────────
+
+1. Document Loading
+   - Scans recursively, extracts text (PDF, TXT, JSON, etc.)
+   - Skips ignored and hidden files
+
+2. Index Creation
+   - Uses sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+   - Stores persistent vectors under /data/kb/<collection>
+
+3. Retrieval
+   - During text generation, retrieves top-K semantically similar chunks
+
+4. Context Injection
+   - Injects snippets into the LLM prompt:
+     {user_prompt}
+     ---
+     Context (from KB):
+     {top_snippets}
+     ---
+
+──────────────────────────────────────────────
+🛠️  Command Reference
+──────────────────────────────────────────────
+
+Core Operations:
+vaio full-auto ./video.mp4
+vaio audio ./video.mp4
+vaio desc ./video.mp4 --template-file tdtmp.txt
+vaio translate ./video.mp4
+vaio captions ./video.mp4
+vaio tts ./video.mp4
+
+Knowledge Base Management:
+vaio kb build <video>
+vaio kb list <video>
+vaio kb stats <video>
+vaio kb clear <video>
+vaio kb set <video> --knowledge <path>  # or 'none'
+
+──────────────────────────────────────────────
+🧠  LLM Integration
+──────────────────────────────────────────────
+
+VAIO uses Ollama to run local LLMs (e.g., llama3, mistral)
+and dynamically constructs prompts based on:
+- Template file (--template-file)
+- Captions or audio transcript
+- Injected knowledge context (if KB enabled)
+
+The generation stages (desc, translate) invoke:
+vaio.kb.inject_context() before sending the final prompt.
+Results are stored under /description/td.<lang>.txt beside the video.
+
+──────────────────────────────────────────────
+🔊  TTS Integration
+──────────────────────────────────────────────
+
+Voice generation uses Kokoro-82M (hexgrad/Kokoro) via Hugging Face:
+from kokoro import KPipeline
+pipe = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+
+VAIO allows language, gender, and voice style selection.
+
+──────────────────────────────────────────────
+📂  Directory Layout
+──────────────────────────────────────────────
+
+VAI0/
+ ├─ vaio/
+ │   ├─ core/
+ │   ├─ kb/
+ │   ├─ stages/
+ │   ├─ cli.py
+ │   └─ __init__.py
+ ├─ knowledge/
+ │   └─ default/
+ ├─ data/
+ │   └─ kb/
+ ├─ tests/
+ ├─ llm.txt
+ └─ README.md
+
+──────────────────────────────────────────────
+⚙️  Environment
+──────────────────────────────────────────────
+
+- Python 3.12+
+- FFmpeg (must be in PATH)
+- Ollama (installed locally)
+- Hugging Face token (for Kokoro)
+- Local model cache at ~/.ollama and ~/.cache/huggingface
+
+──────────────────────────────────────────────
+📄  License
+──────────────────────────────────────────────
+
+MIT License — © AXID.ONE

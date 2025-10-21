@@ -41,6 +41,7 @@ SYSTEM_PROMPT_TITLE = (
     "1) Reflect the video's main theme.\n"
     "2) Be emotional, attractive, and relevant to real search behavior.\n"
     "3) Output ONLY the title text, no comments."
+    "4) Some languages distinguish between rough and cut diamonds. Always refer to 'cut diamonds', unless the rough is clearly described!"
 )
 
 USER_PROMPT_TITLE = (
@@ -54,7 +55,8 @@ SYSTEM_PROMPT_DESC = (
     "Rules:\n"
     "1) Replace <Hook and SEO optimized video description from captions> with your generated text.\n"
     "2) Preserve formatting, structure, and other static text.\n"
-    "3) Output ONLY the final description text."
+    "3) Some languages distinguish between rough and cut diamonds. Always refer to 'cut diamonds', unless the rough is clearly described!\n"
+    "4) Output ONLY the final description text."
 )
 
 USER_PROMPT_DESC = (
@@ -98,57 +100,85 @@ def chat_with_retries(model: str, system_prompt: str, user_prompt: str) -> str:
 # ────────────────────────────────
 # 🧩 TD GENERATION
 # ────────────────────────────────
+# ────────────────────────────────
+# 🧩 TD GENERATION
+# ────────────────────────────────
 def process(video_path: Path, template_path: Path | None = None):
     """
     Generates title+description file based on SRT captions and optional template.
     Produces: description/td.<lang>.txt
     """
+    # ↓↓↓ ADD THESE IMPORTS AT TOP OF FILE ↓↓↓
+    from vaio.kb import inject_context, build_if_needed
+    # ↑↑↑ Add once near other imports ↑↑↑
+
     # Detect language dynamically
+    # ────────────────────────────────
+    # 🧩 INPUT DETECTION
+    # ────────────────────────────────
     lang_code = SOURCE_LANGUAGE_CODE.lower()
-    captions_path = video_path.parent / "captions" / f"{video_path.stem}.{lang_code}.srt"
-    if not captions_path.exists():
-        print(f"⚠️ No '{lang_code}' caption found. Searching for any caption variant...")
-        alt_srts = list((video_path.parent / "captions").glob(f"{video_path.stem}.*.srt"))
-        if alt_srts:
-            captions_path = alt_srts[0]
-            lang_code = captions_path.suffixes[-2].lstrip(".")
-            print(f"📄 Using fallback captions: {captions_path.name}")
-        else:
-            print(f"❌ No captions found for {video_path.name}. Run `vaio audio {video_path.name}` first.")
-            sys.exit(1)
+    captions = ""
 
+    captions_dir = video_path.parent / "captions"
+    if captions_dir.exists():
+        captions_path = captions_dir / f"{video_path.stem}.{lang_code}.srt"
+        if not captions_path.exists():
+            print(f"⚠️ No '{lang_code}' caption found. Searching for any caption variant...")
+            alt_srts = list(captions_dir.glob(f"{video_path.stem}.*.srt"))
+            if alt_srts:
+                captions_path = alt_srts[0]
+                lang_code = captions_path.suffixes[-2].lstrip(".")
+                print(f"📄 Using fallback captions: {captions_path.name}")
+            else:
+                print(f"⚠️ No captions found for {video_path.name}. Continuing without captions...")
+                captions_path = None
+        if captions_path and captions_path.exists():
+            captions = read_text(captions_path)
+    else:
+        print("⚠️ No captions directory found. Continuing without captions...")
 
-    captions = read_text(captions_path)
     # 📋 TEMPLATE HANDLING
     if template_path and template_path.exists():
         template = read_text(template_path)
         print(f"📋 Using provided template: {template_path.name}")
     else:
-        # Try local and fallback paths
         possible_paths = [
+            Path.resolve(video_path.parent / TMP_FILENAME),
             video_path.parent / TMP_FILENAME,
             Path.cwd() / TMP_FILENAME,
             Path.cwd() / "templates" / TMP_FILENAME,
         ]
+        print(possible_paths)
         found = next((p for p in possible_paths if p.exists()), None)
-
         if found:
             print(f"📄 Found default template: {found}")
             template = read_text(found)
         else:
             print("⚠️ No template file detected in common locations.")
-            if not confirm("Continue without template and use default layout?"):
-                print("❌ Aborted. Provide a template (e.g. td_temp.txt) and rerun:")
-                print(f"   vaio desc \"{video_path.name}\" --template-file td_temp.txt")
-                sys.exit(0)
+            if not captions.strip():
+                print("❌ Neither captions nor a template are available. Cannot continue.")
+                sys.exit(1)
+            print("⚠️ Proceeding with captions-only generation (no layout template).")
             template = "<Hook and SEO optimized video description from captions>\n\n<Video description>"
+
+    # ────────────────────────────────
+    # 🧠 KNOWLEDGE BASE INTEGRATION
+    # ────────────────────────────────
+    try:
+        build_if_needed(video_path)  # auto-build KB if present but empty
+    except Exception as e:
+        print(f"⚠️ Knowledge Base initialization skipped: {e}")
 
     print("🧠 Generating SEO title...")
     title_prompt = USER_PROMPT_TITLE.format(src_lang=SOURCE_LANGUAGE, captions=captions)
+    # Inject context into the user prompt before sending to LLM
+    title_prompt = inject_context(video_path, title_prompt)
+    title_prompt = inject_context(video_path, title_prompt, task="title")
     title = chat_with_retries(OLLAMA_MODEL, SYSTEM_PROMPT_TITLE, title_prompt)
 
     print("🧠 Generating SEO description...")
     desc_prompt = USER_PROMPT_DESC.format(captions=captions, template=template)
+    desc_prompt = inject_context(video_path, desc_prompt, task="desc")
     desc = chat_with_retries(OLLAMA_MODEL, SYSTEM_PROMPT_DESC.format(src_lang=SOURCE_LANGUAGE), desc_prompt)
 
     # Combine output

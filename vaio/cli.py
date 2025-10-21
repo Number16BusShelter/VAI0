@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 VAIO CLI
 ========
@@ -13,16 +15,24 @@ Usage:
   vaio video.mp4         # auto-detect and run staged pipeline
 """
 
-from __future__ import annotations
+"""
+Wel
+"""
+
+
 import argparse
 import sys
 import shutil
 from pathlib import Path
 from textwrap import dedent
 
+
 from vaio.core import audio, description, translate, captions, full_auto
 from vaio.core.utils import load_meta, save_last_command, rerun_last_command, confirm
 from vaio.core.constants import PROJECT_VERSION, CLI_ICONS
+
+from vaio.kb import register_kb_cli
+from vaio.kb.cli import handle_kb
 
 
 try:
@@ -244,6 +254,8 @@ def main(argv=None):
     parser.add_argument("--version", action="version", version=f"vaio {PROJECT_VERSION}")
     sub = parser.add_subparsers(dest="command")
 
+    register_kb_cli(sub)
+
     # add full-auto subcommand
     p_full = sub.add_parser("full-auto", help="🤖 Run full staged pipeline end-to-end")
     p_full.add_argument("video_file", help="Path to video file")
@@ -280,6 +292,11 @@ def main(argv=None):
     p_check.set_defaults(func=handle_debug)
 
     args = parser.parse_args(argv)
+
+    if getattr(args, "kb_cmd", None):
+        handle_kb(args)
+        return
+
     if not hasattr(args, "func"):
         parser.print_help()
         sys.exit(0)

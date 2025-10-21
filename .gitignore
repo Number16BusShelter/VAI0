@@ -92,3 +92,6 @@ tmp/
 temp/
 test_*.*
 __test__/
+
+knowledge/*
+data/*
