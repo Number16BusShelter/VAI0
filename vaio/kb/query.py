@@ -9,11 +9,17 @@ from .loader import load_documents
 from vaio.core.utils import load_meta, save_meta  # reuse existing meta IO
 from llama_index.core import get_response_synthesizer
 from llama_index.core.retrievers import VectorIndexRetriever
+from .store import open_index
 
 def retrieve_context(kb_name: str, query: str, top_k: int = 3) -> list[str]:
     index = open_index(kb_name)
     retriever = VectorIndexRetriever(index=index, similarity_top_k=top_k)
     nodes = retriever.retrieve(query)
+    if not nodes:
+        print("⚠️ No context snippets retrieved from KB.")
+        return prompt
+
+    print(f"📂 Injected {len(nodes)} context snippets from KB.")
     return [n.get_content() for n in nodes]
 
 def inject_context(kb_name: str, prompt: str, top_k: int = 3) -> str:
@@ -220,40 +226,62 @@ def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[str]:
         return []
 
 
-def inject_context(video_path: Path, user_prompt: str, task: str = "desc") -> str:
+def inject_context(video_path_or_kb, prompt: str, top_k: int = 3, task: str | None = None) -> str:
     """
-    Retrieves relevant KB snippets and appends them to the LLM prompt.
-    Applies confidence threshold + source tracing for debugging clarity.
+    Retrieve relevant KB snippets and prepend them to the prompt.
+    Works with:
+      - video_path (Path)
+      - kb_name (str)
+    Optionally uses `task` to select filters (e.g. title, desc, translate).
     """
-    kb_dir = _resolve_kb_dir_for_video(video_path)
-    if kb_dir is None:
-        return user_prompt
 
-    try:
-        query = f"{task} context: {user_prompt[:400]}"
-        results = retrieve(video_path, query, top_k=5)
-        if not results:
-            return user_prompt
+    from .store import init_embed_model  # 🔹 ensure local model loaded
 
-        # Confidence threshold filter
-        filtered = [
-            r for r in results if r["score"] is None or r["score"] > 0.35
-        ]
-        if not filtered:
-            return user_prompt
+    # try:
+        # 🔹 Always use local embedding model (HuggingFace)
+    init_embed_model()
 
-        # Annotate each source
-        context_blocks = [
-            f"[{r['source']}] {r['text']}" for r in filtered if r.get("text")
-        ]
-        context_text = "\n\n".join(context_blocks)
+    # Resolve KB directory from video path or kb name
+    if isinstance(video_path_or_kb, Path):
+        kb_dir = _resolve_kb_dir_for_video(video_path_or_kb)
+        kb_name = str(kb_dir) if kb_dir else None
+    else:
+        kb_name = str(video_path_or_kb)
 
-        print(f"📚 Injected {len(filtered)} KB snippets into prompt.")
-        return f"{user_prompt}\n\n---\nContext (from KB):\n{context_text}\n---"
+    if not kb_name:
+        return prompt
 
-    except Exception as e:
-        print(f"⚠️ Context injection failed: {e}")
-        return user_prompt
+    # Optional: apply metadata filters by task
+    filters = _filters_for_task(task) if task else None
+
+    # Retrieve snippets
+    index = open_index(kb_name)
+    retriever = index.as_retriever(similarity_top_k=top_k, filters=filters)
+    nodes = retriever.retrieve(prompt)
+    if not nodes:
+        return prompt
+
+    formatted_snippets = []
+    for n in nodes:
+        try:
+            if hasattr(n, "get_content"):
+                formatted_snippets.append(n.get_content().strip())
+            elif isinstance(n, str):
+                formatted_snippets.append(n.strip())
+            elif isinstance(n, dict):
+                formatted_snippets.append(n.get("text", "").strip())
+            else:
+                formatted_snippets.append(str(n).strip())
+        except Exception:
+            continue
+
+    context_text = "\n\n".join(formatted_snippets[:top_k])
+    header = f"## Context (task={task or 'general'})\n"
+    return f"{header}{context_text}\n\n---\n\n{prompt}"
+
+    # except Exception as e:
+    #     print(f"⚠️ Context injection failed: {e}")
+    #     return prompt
 
 
 def build_if_needed(video_path: Path):
@@ -272,3 +300,6 @@ def build_if_needed(video_path: Path):
     if stats["count"] == 0 and any(kb_dir.iterdir()):
         docs = load_documents(kb_dir)
         build_index(kb_dir, docs)
+
+    print(f"🧠 KB active: {stats['collection']} ({stats['count']} documents)")
+    

@@ -1,11 +1,55 @@
-<Video Name>
+-- This is a tdtmp.example.txt file
+-- Line prefix "--" indicates a comment, that does not go into the final td file
+-- All <!-- <>  --><!-- </>  --> Constructions must be interpreted and NEVER ADDED to the final td file
+-- Eveything outside <!-- <>  --><!-- </>  --> Shoul be copied as is
+-- Context is never saved directly to the final td file
 
-<Video Description>
+<!-- <Instructions>  -->
+- Make a TD (Title and description) file
+- SEO optimize it for Youtube 
+- Use a professional and restrained tone
+- Don't overdo it with emojis
+<!-- </Instructions>  -->
+
+<!-- <Context>  -->
+- VAI0 (Video Auto Intelligence Operator) is an end-to-end CLI workflow that converts your raw videos into multilingual, SEO-optimized YouTube assets — including captions, titles, and descriptions — ready for global publishing.
+- VAI0 specializes on YouTube video creation
+- VAI0 is created by Number16BusShelter
+<!-- </Context>  -->
+
+Fixed Video Name
+<!-- <Video Name>  -->
+Suggested/Interpreted name 
+<!-- </Video Name>  -->
+
+<!-- <Video Description>  -->
+-- Prompt for the description
+This is a video about VAI0. Describe the benifits and features of the project.
+Make it a well selling description
+<!-- </Video Description>  -->
 
 _____________________________
 
 
-#ATH #ETF
-#crypto #bitcoin 
-#Wallstreet 
-#investment #money
+🙏 Please 👍 Like and 🔉 Subscribe 
+
+🔗 Github: https://github.com/number16busshelter/VAI0
+
+Subscribe to my instagram: https://instagram.com/number16busshelter
+
+_____________________________
+
+
+Learn more about programming in my playlist: https://youtu.be/jkLnMeS3
+
+
+Donate ETH: 0x7823e78a7bcf34a364b0928346e23ddb23
+
+
+-- Both groups will be used
+<!-- <Hash tags> -->
+#THIS #ARE #THE #TAGS #THAT #WILL #BE #INTERPRETED
+<!-- </Hash tags> -->
+#THIS #ARE #THE #TAGS #THAT #WILL #BE #KEPT #AS #IS
+
+

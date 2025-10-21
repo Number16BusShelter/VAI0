@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+import os
+import torch
 from pathlib import Path
 import chromadb
 from chromadb import PersistentClient
@@ -8,6 +11,8 @@ from llama_index.core import Settings, VectorStoreIndex, StorageContext, Documen
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from .paths import DATA_DIR, kb_collection_name, DEFAULT_CHROMA_DIR, DEFAULT_EMBED_MODEL
+
+_EMBED_MODEL_INITIALIZED = False
 
 # ────────────────────────────────
 # 📍 Directory setup
@@ -29,31 +34,64 @@ from llama_index.core import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from .paths import DEFAULT_EMBED_MODEL
 
-def init_embed_model(model_name: str | None = None, device: str | None = None):
+def init_embed_model(model_name: str | None = None):
     """
-    Initialize a local embedding model (HuggingFace) instead of OpenAI.
+    Always initialize a local HuggingFace embedding model.
+    Prevents LlamaIndex from defaulting to OpenAI.
     """
-    from torch import backends
+    global _EMBED_MODEL_INITIALIZED
 
-    # pick MPS or CPU automatically for Apple Silicon
-    device = device or ("mps" if backends.mps.is_available() else "cpu")
+    # 🧱 Avoid triggering LlamaIndex's default OpenAI loader
+    if _EMBED_MODEL_INITIALIZED or "embed_model" in Settings.__dict__:
+        return
+
     model = model_name or DEFAULT_EMBED_MODEL
+
+    if torch.backends.mps.is_available():
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
+
+    # Explicitly clear OpenAI usage
+    os.environ["OPENAI_API_KEY"] = ""
+    os.environ["LLAMA_INDEX_USE_LOCAL_EMBEDDINGS_ONLY"] = "1"
 
     Settings.embed_model = HuggingFaceEmbedding(
         model_name=model,
         device=device,
     )
 
+    _EMBED_MODEL_INITIALIZED = True
     print(f"🧠 Using local embedding model: {model} [{device}]")
 
+
+import re
+
+def sanitize_collection_name(name: str) -> str:
+    """
+    Ensure collection name fits ChromaDB requirements:
+    3–512 chars, only [a-zA-Z0-9._-], must start/end with alnum.
+    """
+    base = Path(name).stem  # drop path parts if any
+    base = re.sub(r"[^a-zA-Z0-9._-]+", "_", base)
+    base = base.strip("._-")
+    if len(base) < 3:
+        base = f"kb_{base or 'default'}"
+    return base[:128]  # keep under limit
+
+
 def get_chroma_collection(kb_name: str, base_dir: str = DEFAULT_CHROMA_DIR):
-    persist_dir = str(Path(base_dir) / kb_name)
+    # sanitize name to avoid validation errors
+    safe_name = sanitize_collection_name(str(kb_name))
+    persist_dir = str(Path(base_dir) / safe_name)
+
     client = chromadb.PersistentClient(
         path=persist_dir,
-        settings=ChromaSettings(allow_reset=True)  # optional; helpful in dev
+        settings=ChromaSettings(allow_reset=True)
     )
-    # One collection per KB name
-    return client.get_or_create_collection(name=kb_name, metadata={"kb_name": kb_name})
+    return client.get_or_create_collection(name=safe_name, metadata={"kb_name": safe_name})
 
 
 def _get_local_client(kb_dir: Path) -> chromadb.Client:
@@ -97,8 +135,6 @@ def debug_list_docs(kb_dir: Path, limit: int = 20):
 # 🧠 BUILD INDEX
 # ────────────────────────────────
 def build_index(kb_name_or_dir, documents):
-    from .store import init_embed_model
-    init_embed_model()
     """
     Build or update a ChromaDB index for the given KB and documents.
 
@@ -107,6 +143,8 @@ def build_index(kb_name_or_dir, documents):
       - kb_dir (Path or list[str])
       - or legacy list input (['knowledge/default'])
     """
+    # 🔹 Ensure embedding model initialized before any vector ops
+    init_embed_model()
 
     # Normalize input type
     if isinstance(kb_name_or_dir, (list, tuple)):
@@ -118,8 +156,8 @@ def build_index(kb_name_or_dir, documents):
     else:
         raise TypeError(f"Unsupported type for kb_name_or_dir: {type(kb_name_or_dir)}")
 
-    # Ensure embedding model initialized
-    if not hasattr(Settings, "embed_model") or Settings.embed_model is None:
+    # Optional: fallback safeguard
+    if not getattr(Settings, "embed_model", None):
         init_embed_model()
 
     collection = get_chroma_collection(kb_name)
@@ -142,11 +180,21 @@ def build_index(kb_name_or_dir, documents):
 # 🧭 GET EXISTING INDEX
 # ────────────────────────────────
 def open_index(kb_name: str) -> VectorStoreIndex:
+    """
+    Load an existing KB index by name. Ensures local embedding model is active.
+    """
+    # 🔹 Always make sure we’re using local embeddings
+    init_embed_model()
+
     collection = get_chroma_collection(kb_name)
     vector_store = ChromaVectorStore(chroma_collection=collection)
     storage_ctx = StorageContext.from_defaults(vector_store=vector_store)
-    # build an "empty" index object bound to the existing store
-    return VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_ctx)
+
+    index = VectorStoreIndex.from_vector_store(
+        vector_store,
+        storage_context=storage_ctx,
+    )
+    return index
 
 def get_index(kb_dir: Path) -> VectorStoreIndex:
     client = _get_local_client(kb_dir)

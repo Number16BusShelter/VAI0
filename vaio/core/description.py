@@ -14,8 +14,11 @@ Usage:
 """
 
 from __future__ import annotations
-from pathlib import Path
+
+import re
 import sys
+from typing import Dict, Tuple
+from pathlib import Path
 import ollama
 
 from .constants import (
@@ -29,41 +32,90 @@ from .constants import (
     TMP_FILENAME
 )
 from .utils import read_text, write_text, load_meta, save_meta, confirm, ensure_dir
+from vaio.kb.query import inject_context, build_if_needed, load_kb_if_available, _resolve_kb_dir_for_video
+from vaio.kb.store import collection_stats
+
+TAG_BLOCK_PATTERN = re.compile(
+    r"<!--\s*<(?P<name>[^>]+)>\s*-->(?P<content>.*?)<!--\s*</\1>\s*-->",
+    re.DOTALL | re.IGNORECASE
+)
+
+def parse_template_file(text: str) -> Tuple[str, Dict[str, str]]:
+    """
+    Parses a VAIO template file.
+
+    Returns:
+        (clean_text, blocks)
+        - clean_text: all non-comment, non-semantic text that should appear verbatim
+        - blocks: dict of named blocks { "Video Name": "...", "Video Description": "...", "Hash tags": "..." }
+    """
+    # 1️⃣ Remove comment lines (start with "--")
+    lines = [
+        line for line in text.splitlines()
+        if not line.strip().startswith("--")
+    ]
+    text = "\n".join(lines)
+
+    # 2️⃣ Extract semantic blocks
+    blocks = {}
+    for match in TAG_BLOCK_PATTERN.finditer(text):
+        name = match.group("name").strip()
+        content = match.group("content").strip()
+        blocks[name] = content
+
+    # 3️⃣ Keep everything outside semantic blocks (verbatim content)
+    clean_text = TAG_BLOCK_PATTERN.sub("", text).strip()
+
+    return clean_text, blocks
 
 
 # ────────────────────────────────
 # 🧠 PROMPTS
 # ────────────────────────────────
-SYSTEM_PROMPT_TITLE = (
-    "You are an expert in YouTube SEO, media marketing, and title optimization. "
-    "Your task is to analyze captions (SRT) and produce a concise, catchy, and SEO-optimized title. "
-    "Rules:\n"
-    "1) Reflect the video's main theme.\n"
-    "2) Be emotional, attractive, and relevant to real search behavior.\n"
-    "3) Output ONLY the title text, no comments."
-    "4) Some languages distinguish between rough and cut diamonds. Always refer to 'cut diamonds', unless the rough is clearly described!"
-)
-
-USER_PROMPT_TITLE = (
-    "Analyze the following subtitles (SRT) and generate a compelling YouTube title in {src_lang}.\n\n"
-    "----- SRT CONTENT -----\n{captions}\n----- END SRT -----"
-)
-
+# ────────────────────────────────
+# 🧠 PROMPTS
+# ────────────────────────────────
 SYSTEM_PROMPT_DESC = (
-    "You are an expert in multilingual SEO and YouTube optimization. "
-    "Generate a full video description in {src_lang} using the captions and given template.\n"
-    "Rules:\n"
-    "1) Replace <Hook and SEO optimized video description from captions> with your generated text.\n"
-    "2) Preserve formatting, structure, and other static text.\n"
-    "3) Some languages distinguish between rough and cut diamonds. Always refer to 'cut diamonds', unless the rough is clearly described!\n"
-    "4) Output ONLY the final description text."
+    "You are a professional YouTube content strategist, copywriter, and SEO expert. "
+    "Your task is to generate a highly readable, SEO-optimized YouTube video description "
+    "in {src_lang} using the provided captions, contextual notes, and structured template.\n\n"
+    "Requirements:\n"
+    "1) Use the captions to infer the main topic, tone, and key moments.\n"
+    "2) Fill all relevant template placeholders with coherent, engaging text.\n"
+    "3) Keep a professional tone and natural rhythm suitable for YouTube viewers.\n"
+    "4) Do not invent unrelated topics; stay strictly within context.\n"
+    "5) NEVER include metadata markers (like <!-- --> or ## sections) in the output.\n"
+    "6) Preserve all non-dynamic parts of the template as-is.\n"
+    "7) Output ONLY the final, ready-to-publish description text."
 )
 
 USER_PROMPT_DESC = (
-    "Use the following captions and layout template to write the full description.\n\n"
-    "----- CAPTIONS -----\n{captions}\n----- END CAPTIONS -----\n\n"
-    "----- TEMPLATE -----\n{template}\n----- END TEMPLATE -----"
+    "Use the following materials to write a complete YouTube description:\n\n"
+    "## Captions\n{captions}\n\n"
+    "## Template\n{template}\n\n"
+    "If relevant, include hashtags from context or template naturally at the end."
 )
+
+SYSTEM_PROMPT_TITLE = (
+    "You are an expert in YouTube SEO and media marketing. "
+    "Your task is to write a concise, compelling, and search-optimized title "
+    "for a video, using the provided description, captions, and context.\n\n"
+    "Rules:\n"
+    "1) The title must reflect the video's actual topic and emotional core.\n"
+    "2) Keep it under 100 characters if possible.\n"
+    "3) Use capitalization consistent with YouTube standards (Title Case).\n"
+    "4) No hashtags, emojis, or quotation marks unless critical for emphasis.\n"
+    "5) Output ONLY the title text — no commentary or explanations."
+)
+
+USER_PROMPT_TITLE = (
+    "Generate the most relevant, high-CTR YouTube title in {src_lang}, "
+    "based on the video’s content below.\n\n"
+    "## Captions\n{captions}\n\n"
+    "## Description\n{description}\n\n"
+    "Use natural language and strong search intent keywords."
+)
+
 
 
 # ────────────────────────────────
@@ -97,99 +149,209 @@ def chat_with_retries(model: str, system_prompt: str, user_prompt: str) -> str:
     raise RuntimeError("Ollama failed after all retries.")
 
 
-# ────────────────────────────────
-# 🧩 TD GENERATION
-# ────────────────────────────────
-# ────────────────────────────────
-# 🧩 TD GENERATION
-# ────────────────────────────────
-def process(video_path: Path, template_path: Path | None = None):
-    """
-    Generates title+description file based on SRT captions and optional template.
-    Produces: description/td.<lang>.txt
-    """
-    # ↓↓↓ ADD THESE IMPORTS AT TOP OF FILE ↓↓↓
-    from vaio.kb import inject_context, build_if_needed
-    # ↑↑↑ Add once near other imports ↑↑↑
 
-    # Detect language dynamically
-    # ────────────────────────────────
-    # 🧩 INPUT DETECTION
-    # ────────────────────────────────
+# ────────────────────────────────
+# 🧩 TD GENERATION
+# ────────────────────────────────
+# ────────────────────────────────
+# 🧩 TD GENERATION (refactored)
+# ────────────────────────────────
+
+from dataclasses import dataclass
+
+
+@dataclass
+class InputData:
+    lang_code: str
+    captions: str
+    raw_template: str
+    blocks: dict[str, str]
+    template_text: str
+
+
+# ────────────────────────────────
+# 📥 LOAD INPUTS
+# ────────────────────────────────
+def load_inputs(video_path: Path, template_path: Path | None = None) -> InputData:
+    """Loads captions, template, and parses structured blocks."""
+
     lang_code = SOURCE_LANGUAGE_CODE.lower()
     captions = ""
 
+    # Load captions
     captions_dir = video_path.parent / "captions"
     if captions_dir.exists():
         captions_path = captions_dir / f"{video_path.stem}.{lang_code}.srt"
         if not captions_path.exists():
-            print(f"⚠️ No '{lang_code}' caption found. Searching for any caption variant...")
             alt_srts = list(captions_dir.glob(f"{video_path.stem}.*.srt"))
             if alt_srts:
                 captions_path = alt_srts[0]
                 lang_code = captions_path.suffixes[-2].lstrip(".")
                 print(f"📄 Using fallback captions: {captions_path.name}")
             else:
-                print(f"⚠️ No captions found for {video_path.name}. Continuing without captions...")
+                print("⚠️ No captions found. Continuing without captions...")
                 captions_path = None
         if captions_path and captions_path.exists():
             captions = read_text(captions_path)
     else:
         print("⚠️ No captions directory found. Continuing without captions...")
 
-    # 📋 TEMPLATE HANDLING
+    # Load template
     if template_path and template_path.exists():
-        template = read_text(template_path)
+        raw_template = read_text(template_path)
         print(f"📋 Using provided template: {template_path.name}")
     else:
-        possible_paths = [
+        candidates = [
             Path.resolve(video_path.parent / TMP_FILENAME),
             video_path.parent / TMP_FILENAME,
             Path.cwd() / TMP_FILENAME,
             Path.cwd() / "templates" / TMP_FILENAME,
         ]
-        print(possible_paths)
-        found = next((p for p in possible_paths if p.exists()), None)
+        found = next((p for p in candidates if p.exists()), None)
         if found:
             print(f"📄 Found default template: {found}")
-            template = read_text(found)
+            raw_template = read_text(found)
         else:
-            print("⚠️ No template file detected in common locations.")
-            if not captions.strip():
-                print("❌ Neither captions nor a template are available. Cannot continue.")
-                sys.exit(1)
-            print("⚠️ Proceeding with captions-only generation (no layout template).")
-            template = "<Hook and SEO optimized video description from captions>\n\n<Video description>"
+            print("⚠️ No template file detected. Proceeding in captions-only mode.")
+            raw_template = "<!-- <Video Description> -->\n<Hook>\n<!-- </Video Description> -->"
 
-    # ────────────────────────────────
-    # 🧠 KNOWLEDGE BASE INTEGRATION
-    # ────────────────────────────────
+    # Parse template
+    base_text, blocks = parse_template_file(raw_template)
+    template_text = (
+        (blocks.get("Video Description") or "") + "\n\n" + base_text
+    ).strip() or "<Hook and SEO optimized video description from captions>"
+
+    if blocks:
+        print(f"🧱 Parsed template sections: {', '.join(blocks.keys())}")
+    else:
+        print("ℹ️ No structured template sections found (plain text mode).")
+
+    return InputData(
+        lang_code=lang_code,
+        captions=captions,
+        raw_template=raw_template,
+        blocks=blocks,
+        template_text=template_text,
+    )
+
+
+# ────────────────────────────────
+# 🧠 KNOWLEDGE BASE
+# ────────────────────────────────
+def prepare_kb(video_path: Path):
+    """Build and validate KB context."""
+    from vaio.kb.query import build_if_needed, load_kb_if_available, _resolve_kb_dir_for_video
+    from vaio.kb.store import collection_stats
+
     try:
-        build_if_needed(video_path)  # auto-build KB if present but empty
-    except Exception as e:
-        print(f"⚠️ Knowledge Base initialization skipped: {e}")
+        # 🔹 Force KB directory into repo_root/data/kb
+        repo_root = Path(__file__).resolve().parents[2]
+        global_kb_dir = repo_root / "data" / "kb"
+        global_kb_dir.mkdir(parents=True, exist_ok=True)
 
-    print("🧠 Generating SEO title...")
-    title_prompt = USER_PROMPT_TITLE.format(src_lang=SOURCE_LANGUAGE, captions=captions)
-    # Inject context into the user prompt before sending to LLM
-    title_prompt = inject_context(video_path, title_prompt)
-    title_prompt = inject_context(video_path, title_prompt, task="title")
-    title = chat_with_retries(OLLAMA_MODEL, SYSTEM_PROMPT_TITLE, title_prompt)
+        build_if_needed(global_kb_dir)
+        kb_index = load_kb_if_available(global_kb_dir)
+
+        if kb_index and global_kb_dir.exists():
+            stats = collection_stats(global_kb_dir)
+            print(f"🧠 KB active: {stats['collection']} ({stats['count']} docs)")
+            return stats
+        else:
+            print("⚠️ KB not loaded or empty. Continuing without contextual enrichment.")
+            return None
+    except Exception as e:
+        print(f"⚠️ KB preparation skipped: {e}")
+        return None
+
+
+
+# ────────────────────────────────
+# 🧠 DESCRIPTION GENERATION
+# ────────────────────────────────
+def generate_description(video_path: Path, data: InputData) -> str:
+    """Generate SEO-optimized description text."""
+    from vaio.kb.query import inject_context
 
     print("🧠 Generating SEO description...")
-    desc_prompt = USER_PROMPT_DESC.format(captions=captions, template=template)
-    desc_prompt = inject_context(video_path, desc_prompt, task="desc")
-    desc = chat_with_retries(OLLAMA_MODEL, SYSTEM_PROMPT_DESC.format(src_lang=SOURCE_LANGUAGE), desc_prompt)
 
-    # Combine output
+    desc_prompt = USER_PROMPT_DESC.format(captions=data.captions, template=data.template_text)
+    desc_prompt = inject_context(video_path, desc_prompt, task="desc")
+
+    inst = data.blocks.get("Instructions", "")
+    ctx = data.blocks.get("Context", "")
+    desc_section = data.blocks.get("Video Description", "")
+    tags = data.blocks.get("Hash tags", "")
+
+    # Structured LLM prompt
+    desc_prompt = (
+        f"## Instructions\n{inst}\n\n"
+        f"## Context\n{ctx}\n\n"
+        f"## Description Base\n{desc_section}\n\n"
+        f"## Hashtags\n{tags}\n\n"
+        f"{USER_PROMPT_DESC.format(captions=data.captions, template=data.template_text)}"
+    )
+
+    desc_prompt = inject_context(video_path, desc_prompt, task="desc")
+
+
+    return chat_with_retries(OLLAMA_MODEL, SYSTEM_PROMPT_DESC.format(src_lang=SOURCE_LANGUAGE), desc_prompt)
+
+
+# ────────────────────────────────
+# 🧠 TITLE GENERATION
+# ────────────────────────────────
+def generate_title(video_path: Path, data: InputData, description: str | None = None) -> str:
+    """Generate a title using description, captions, or both."""
+    from vaio.kb.query import inject_context
+
+    print("🧠 Generating SEO title...")
+
+    # Choose best available context
+    captions_part = data.captions.strip()
+    desc_part = description.strip() if description else ""
+    combined_context = ""
+
+    if captions_part and desc_part:
+        combined_context = f"## DESCRIPTION\n{desc_part}\n\n## CAPTIONS\n{captions_part}"
+    elif desc_part:
+        combined_context = f"## DESCRIPTION\n{desc_part}"
+    elif captions_part:
+        combined_context = f"## CAPTIONS\n{captions_part}"
+
+    title_prompt = USER_PROMPT_TITLE.format(
+        src_lang=SOURCE_LANGUAGE,
+        captions=captions_part or "(no captions)",
+        description=desc_part or "(no description)"
+    ) + f"\n\n{combined_context}"
+
+    title_prompt = inject_context(video_path, title_prompt, task="title")
+
+    inst = data.blocks.get("Instructions", "")
+    ctx = data.blocks.get("Context", "")
+    name_hint = data.blocks.get("Video Name", "")
+
+    if inst or ctx or name_hint:
+        title_prompt = (
+            f"## Instructions\n{inst}\n\n"
+            f"## Context\n{ctx}\n\n"
+            f"## Video Name Hint\n{name_hint}\n\n"
+            f"{title_prompt}"
+        )
+
+    return chat_with_retries(OLLAMA_MODEL, SYSTEM_PROMPT_TITLE, title_prompt)
+
+
+# ────────────────────────────────
+# 💾 SAVE RESULTS
+# ────────────────────────────────
+def save_td(video_path: Path, title: str, description: str, lang_code: str):
     desc_dir = video_path.parent / "description"
     ensure_dir(desc_dir)
     td_path = desc_dir / f"td.{lang_code}.txt"
-    combined = f"{title.strip()}\n\n\n{desc.strip()}\n"
-    write_text(td_path, combined)
 
+    combined = f"{title.strip()}\n\n\n{description.strip()}\n"
+    write_text(td_path, combined)
     print(f"✅ TD generated → {td_path}")
-    print("🧩 Opening in VS Code for review...")
 
     import shutil, subprocess
     try:
@@ -200,17 +362,36 @@ def process(video_path: Path, template_path: Path | None = None):
     except Exception as e:
         print(f"⚠️ Could not auto-open TD file: {e}")
 
+    meta = load_meta(video_path)
+    meta.update({
+        "stage": "description_done",
+        "td_lang": lang_code,
+        "td_file": str(td_path.name)
+    })
+    save_meta(video_path, meta)
+
+    print("✅ TD metadata saved.")
+    return td_path
+
+
+# ────────────────────────────────
+# 🚀 MAIN ORCHESTRATOR
+# ────────────────────────────────
+def process(video_path: Path, template_path: Path | None = None):
+    """Main orchestrator for TD generation."""
+    data = load_inputs(video_path, template_path)
+    prepare_kb(video_path)
+
+    desc = generate_description(video_path, data)
+    title = generate_title(video_path, data, description=desc)
+
+    td_path = save_td(video_path, title, desc, data.lang_code)
+
     print()
     if not confirm("Is the title & description correct?"):
         print("❌ Aborted. Edit and rerun `vaio continue` after review.")
         sys.exit(0)
 
-    meta = load_meta(video_path)
-    meta["stage"] = "description_done"
-    meta["td_lang"] = lang_code
-    meta["td_file"] = str(td_path.name)
-
-    save_meta(video_path, meta)
-
     print("✅ TD confirmed by user.")
     return td_path
+
