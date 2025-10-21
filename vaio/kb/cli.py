@@ -1,114 +1,131 @@
+# vaio/kb/cli.py
 from __future__ import annotations
 
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from pathlib import Path
+import click
+
 from .query import build_kb_for_video, set_kb_dir_for_video, _resolve_kb_dir_for_video
 from .paths import DEFAULT_KB_DIR, ensure_default_dirs
 from .store import collection_stats, clear_index, debug_list_docs
 
 
-def register_kb_cli(subparsers):
-    """Register `vaio kb` subcommands."""
-    kb = subparsers.add_parser("kb", help="🧠 Knowledge Base tools")
-    kb_sub = kb.add_subparsers(dest="kb_cmd")
-
-    # Build KB
-    p_build = kb_sub.add_parser("build", help="Build KB for a project video")
-    p_build.add_argument("video", type=str, help="Path to project video")
-    p_build.add_argument("--knowledge", type=str, default=None, help="Override knowledge directory (full path)")
-
-    # List KB
-    p_list = kb_sub.add_parser("list", help="List stored KB documents")
-    p_list.add_argument("video", type=str, help="Path to project video")
-    p_list.add_argument("--knowledge", type=str, default=None, help="Custom KB directory (default: from meta or knowledge/default)")
-
-    # Set KB
-    p_set = kb_sub.add_parser("set", help="Set knowledge dir (or disable) for a project video")
-    p_set.add_argument("video", type=str, help="Path to project video")
-    p_set.add_argument("--knowledge", type=str, default=None, help="Full path to knowledge dir; use 'none' to disable")
-
-    # Stats
-    p_stats = kb_sub.add_parser("stats", help="Show KB stats for a project video")
-    p_stats.add_argument("video", type=str, help="Path to project video")
-
-    # Clear
-    p_clear = kb_sub.add_parser("clear", help="Clear KB index for a project video (keeps files)")
-    p_clear.add_argument("video", type=str, help="Path to project video")
-
-    return kb
+@click.group(help="🧠 Knowledge Base management commands")
+def kb() -> None:
+    """Top-level KB command group."""
 
 
-def handle_kb(args):
+# ─────────────────────────────────────────────────────────────
+# BUILD
+# ─────────────────────────────────────────────────────────────
+@kb.command("build", help="Build Knowledge Base for a project video")
+@click.argument("video", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--knowledge",
+    type=click.Path(exists=True, file_okay=False),
+    default=None,
+    help="Override knowledge directory (full path)",
+)
+def build_cmd(video: str, knowledge: str | None) -> None:
     ensure_default_dirs()
-    cmd = args.kb_cmd
+    video_path = Path(video)
+    kb_dir = Path(knowledge).resolve() if knowledge else None
 
-    # ────────────────────────────────
-    # Build KB
-    # ────────────────────────────────
-    if cmd == "build":
-        video = Path(args.video)
-        kb_dir = Path(args.knowledge).resolve() if args.knowledge else None
-        if kb_dir is None:
-            print(f"ℹ️  No --knowledge given; using project config or default.")
-        result = build_kb_for_video(video, kb_dir)
-        kb_dir = kb_dir or _resolve_kb_dir_for_video(video)
-        stats = collection_stats(kb_dir)
-        print(f"📊 KB collection={stats['collection']} | docs={stats['count']} | dir={kb_dir}")
+    if kb_dir is None:
+        click.echo("ℹ️  No --knowledge given; using project config or default.")
+    result = build_kb_for_video(video_path, kb_dir)
+    kb_dir = kb_dir or _resolve_kb_dir_for_video(video_path)
 
-        print("\n🔍 Listing current KB entries (truncated preview):")
-        debug_list_docs(kb_dir, limit=10)
+    stats = collection_stats(kb_dir)
+    click.secho(
+        f"📊 KB collection={stats['collection']} | docs={stats['count']} | dir={kb_dir}",
+        fg="green",
+    )
 
-    # ────────────────────────────────
-    # List KB
-    # ────────────────────────────────
+    click.echo("\n🔍 Listing current KB entries (truncated preview):")
+    debug_list_docs(kb_dir, limit=10)
 
-    elif args.kb_cmd == "list":
-        # was: kb_dir = Path(args.knowledge)  <-- wrong
-        if not args.dir:
-            print("❌ --dir is required for 'kb list'")
-            return
-        kb_dir = Path(args.dir)
-        print(f"📚 Listing KB for {kb_dir} ...")
-        debug_list_docs(kb_dir, limit=20)
 
-    # ────────────────────────────────
-    # Set KB
-    # ────────────────────────────────
-    elif cmd == "set":
-        video = Path(args.video)
-        if not args.knowledge:
-            print("❌ --knowledge is required (path or 'none')")
-            return
-        if args.knowledge.strip().lower() in {"none", "null"}:
-            set_kb_dir_for_video(video, None)
-            print("✅ KB disabled for this project.")
-        else:
-            kb_dir = Path(args.knowledge)
-            kb_dir.mkdir(parents=True, exist_ok=True)
-            set_kb_dir_for_video(video, kb_dir)
-            print(f"✅ KB directory set to {kb_dir}")
+# ─────────────────────────────────────────────────────────────
+# LIST
+# ─────────────────────────────────────────────────────────────
+@kb.command("list", help="List stored KB documents")
+@click.argument("video", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--knowledge",
+    type=click.Path(exists=True, file_okay=False),
+    default=None,
+    help="Custom KB directory (default: from meta or knowledge/default)",
+)
+def list_cmd(video: str, knowledge: str | None) -> None:
+    ensure_default_dirs()
+    kb_dir = Path(knowledge).resolve() if knowledge else _resolve_kb_dir_for_video(Path(video))
+    if not kb_dir or not kb_dir.exists():
+        click.secho("❌ KB directory not found.", fg="red")
+        return
 
-    # ────────────────────────────────
-    # Stats
-    # ────────────────────────────────
-    elif cmd == "stats":
-        kb_dir = _resolve_kb_dir_for_video(Path(args.video))
-        if kb_dir is None:
-            print("ℹ️  KB disabled (knowledge=null).")
-            return
-        stats = collection_stats(kb_dir)
-        print(f"📊 KB collection={stats['collection']} | docs={stats['count']} | dir={kb_dir}")
+    click.echo(f"📚 Listing KB for {kb_dir} ...")
+    debug_list_docs(kb_dir, limit=20)
 
-    # ────────────────────────────────
-    # Clear
-    # ────────────────────────────────
-    elif cmd == "clear":
-        video = Path(args.video)
-        kb_dir = _resolve_kb_dir_for_video(video)
-        clear_index(kb_dir)
-        print(f"🧹 Cleared index for {kb_dir}")
 
-    else:
-        print("❌ Unknown KB subcommand. Use: build | list | set | stats | clear")
+# ─────────────────────────────────────────────────────────────
+# SET
+# ─────────────────────────────────────────────────────────────
+@kb.command("set", help="Set or disable Knowledge Base directory for a project video")
+@click.argument("video", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--knowledge",
+    type=str,
+    required=True,
+    help="Full path to knowledge dir; use 'none' to disable",
+)
+def set_cmd(video: str, knowledge: str) -> None:
+    ensure_default_dirs()
+    video_path = Path(video)
+    if knowledge.strip().lower() in {"none", "null"}:
+        set_kb_dir_for_video(video_path, None)
+        click.secho("✅ KB disabled for this project.", fg="yellow")
+        return
+
+    kb_dir = Path(knowledge).resolve()
+    kb_dir.mkdir(parents=True, exist_ok=True)
+    set_kb_dir_for_video(video_path, kb_dir)
+    click.secho(f"✅ KB directory set to {kb_dir}", fg="green")
+
+
+# ─────────────────────────────────────────────────────────────
+# STATS
+# ─────────────────────────────────────────────────────────────
+@kb.command("stats", help="Show Knowledge Base stats for a project video")
+@click.argument("video", type=click.Path(exists=True, dir_okay=False))
+def stats_cmd(video: str) -> None:
+    ensure_default_dirs()
+    kb_dir = _resolve_kb_dir_for_video(Path(video))
+    if kb_dir is None:
+        click.echo("ℹ️  KB disabled (knowledge=null).")
+        return
+
+    stats = collection_stats(kb_dir)
+    click.secho(
+        f"📊 KB collection={stats['collection']} | docs={stats['count']} | dir={kb_dir}",
+        fg="cyan",
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# CLEAR
+# ─────────────────────────────────────────────────────────────
+@kb.command("clear", help="Clear KB index for a project video (keeps files)")
+@click.argument("video", type=click.Path(exists=True, dir_okay=False))
+def clear_cmd(video: str) -> None:
+    ensure_default_dirs()
+    video_path = Path(video)
+    kb_dir = _resolve_kb_dir_for_video(video_path)
+    if not kb_dir:
+        click.secho("❌ KB directory not found or not configured.", fg="red")
+        return
+
+    clear_index(kb_dir)
+    click.secho(f"🧹 Cleared index for {kb_dir}", fg="yellow")

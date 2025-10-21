@@ -2,10 +2,12 @@ from __future__ import annotations
 from pathlib import Path
 import chromadb
 from chromadb import PersistentClient
-from llama_index.core import VectorStoreIndex, StorageContext, Document
+from chromadb.config import Settings as ChromaSettings
+from typing import Optional
+from llama_index.core import Settings, VectorStoreIndex, StorageContext, Document
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
-from .paths import DATA_DIR, kb_collection_name
+from .paths import DATA_DIR, kb_collection_name, DEFAULT_CHROMA_DIR, DEFAULT_EMBED_MODEL
 
 # ────────────────────────────────
 # 📍 Directory setup
@@ -17,9 +19,43 @@ _EMB_MODEL = HuggingFaceEmbedding(
     model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
 
+DEFAULT_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+CACHE_DIR = Path("data/kb_cache")
+
 # ────────────────────────────────
 # 📦 LOCAL CHROMA INITIALIZATION
 # ────────────────────────────────
+from llama_index.core import Settings
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from .paths import DEFAULT_EMBED_MODEL
+
+def init_embed_model(model_name: str | None = None, device: str | None = None):
+    """
+    Initialize a local embedding model (HuggingFace) instead of OpenAI.
+    """
+    from torch import backends
+
+    # pick MPS or CPU automatically for Apple Silicon
+    device = device or ("mps" if backends.mps.is_available() else "cpu")
+    model = model_name or DEFAULT_EMBED_MODEL
+
+    Settings.embed_model = HuggingFaceEmbedding(
+        model_name=model,
+        device=device,
+    )
+
+    print(f"🧠 Using local embedding model: {model} [{device}]")
+
+def get_chroma_collection(kb_name: str, base_dir: str = DEFAULT_CHROMA_DIR):
+    persist_dir = str(Path(base_dir) / kb_name)
+    client = chromadb.PersistentClient(
+        path=persist_dir,
+        settings=ChromaSettings(allow_reset=True)  # optional; helpful in dev
+    )
+    # One collection per KB name
+    return client.get_or_create_collection(name=kb_name, metadata={"kb_name": kb_name})
+
+
 def _get_local_client(kb_dir: Path) -> chromadb.Client:
     """
     Store Chroma data in global data/kb/<kb_name> directory,
@@ -60,32 +96,58 @@ def debug_list_docs(kb_dir: Path, limit: int = 20):
 # ────────────────────────────────
 # 🧠 BUILD INDEX
 # ────────────────────────────────
-def build_index(kb_dir: Path, documents: list[Document]):
-    client = _get_local_client(kb_dir)
-    collection_name = "vaio_kb"
+def build_index(kb_name_or_dir, documents):
+    from .store import init_embed_model
+    init_embed_model()
+    """
+    Build or update a ChromaDB index for the given KB and documents.
 
-    # 🧹 Clear previous collection before rebuild
-    existing = [c.name for c in client.list_collections()]
-    if collection_name in existing:
-        client.delete_collection(collection_name)
-        print(f"🗑️  Old collection '{collection_name}' removed before rebuild.")
+    Accepts either:
+      - kb_name (str)
+      - kb_dir (Path or list[str])
+      - or legacy list input (['knowledge/default'])
+    """
 
-    collection = client.get_or_create_collection(collection_name)
-    vs = ChromaVectorStore(chroma_collection=collection, client=client)
+    # Normalize input type
+    if isinstance(kb_name_or_dir, (list, tuple)):
+        kb_name = str(kb_name_or_dir[0])
+    elif isinstance(kb_name_or_dir, Path):
+        kb_name = kb_name_or_dir.stem
+    elif isinstance(kb_name_or_dir, str):
+        kb_name = kb_name_or_dir
+    else:
+        raise TypeError(f"Unsupported type for kb_name_or_dir: {type(kb_name_or_dir)}")
 
-    storage = StorageContext.from_defaults(vector_store=vs)
-    VectorStoreIndex.from_documents(
+    # Ensure embedding model initialized
+    if not hasattr(Settings, "embed_model") or Settings.embed_model is None:
+        init_embed_model()
+
+    collection = get_chroma_collection(kb_name)
+    vector_store = ChromaVectorStore(chroma_collection=collection)
+    storage_ctx = StorageContext.from_defaults(vector_store=vector_store)
+
+    # Build or extend the index
+    index = VectorStoreIndex.from_documents(
         documents,
-        storage_context=storage,
-        embed_model=_EMB_MODEL,
+        storage_context=storage_ctx,
         show_progress=True,
     )
 
-    print(f"✅ Built index with {len(documents)} docs → {DATA_ROOT / kb_dir.name}")
+    count = collection.count()
+    print(f"✅ Built KB index '{kb_name}' with {count} chunks stored.")
+    return index
+
 
 # ────────────────────────────────
 # 🧭 GET EXISTING INDEX
 # ────────────────────────────────
+def open_index(kb_name: str) -> VectorStoreIndex:
+    collection = get_chroma_collection(kb_name)
+    vector_store = ChromaVectorStore(chroma_collection=collection)
+    storage_ctx = StorageContext.from_defaults(vector_store=vector_store)
+    # build an "empty" index object bound to the existing store
+    return VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_ctx)
+
 def get_index(kb_dir: Path) -> VectorStoreIndex:
     client = _get_local_client(kb_dir)
     collection = client.get_or_create_collection("vaio_kb")

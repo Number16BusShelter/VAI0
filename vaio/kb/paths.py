@@ -8,6 +8,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_KB_DIR = REPO_ROOT / "knowledge" / "default"
 DATA_DIR = REPO_ROOT / "data" / "kb"    # chroma persistence root
 
+DEFAULT_EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+DEFAULT_CHROMA_DIR = "data/kb"
+
 def ensure_default_dirs():
     DEFAULT_KB_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)

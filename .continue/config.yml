@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────
+# Project-specific Continue configuration
+# ──────────────────────────────────────────────
+
+name: VAIO Local
+extends: ~/.continue/config.yaml    # optional, merges explicitly
+schema: v1
+
+# Override or add project-only settings:
+defaultModel: qwen3
+context:
+  - provider: code
+    params:
+      include: ["src", "server", "client"]
+      exclude: ["node_modules", "dist", "coverage", "build"]
+  - provider: diff
+  - provider: file
+  - provider: open
+  - provider: docs
+
+prompts:
+  - name: audit-project
+    description: "Perform a full static audit for this project"
+    prompt: |
+      Perform a complete audit of this codebase.
+      - Identify code smells, duplication, and missing tests.
+      - Check for security, performance, and maintainability issues.
+      - Suggest specific, actionable improvements.
+      - Include findings under Architecture, Code Quality, Security, and Testing.
+      @Codebase

@@ -16,6 +16,15 @@ try:
 except ImportError:
     PdfReader = None
 
+def default_kb_root() -> Path:
+    return Path("data/kb").resolve()
+
+def kb_path(name: str) -> Path:
+    root = default_kb_root()
+    root.mkdir(parents=True, exist_ok=True)
+    return root / name
+
+
 # -----------------------------
 # Ignore rules
 # -----------------------------

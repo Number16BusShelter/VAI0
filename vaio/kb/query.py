@@ -7,7 +7,23 @@ from .paths import ensure_default_dirs, DEFAULT_KB_DIR
 from .store import build_index, get_index, collection_stats
 from .loader import load_documents
 from vaio.core.utils import load_meta, save_meta  # reuse existing meta IO
+from llama_index.core import get_response_synthesizer
+from llama_index.core.retrievers import VectorIndexRetriever
 
+def retrieve_context(kb_name: str, query: str, top_k: int = 3) -> list[str]:
+    index = open_index(kb_name)
+    retriever = VectorIndexRetriever(index=index, similarity_top_k=top_k)
+    nodes = retriever.retrieve(query)
+    return [n.get_content() for n in nodes]
+
+def inject_context(kb_name: str, prompt: str, top_k: int = 3) -> str:
+    snippets = retrieve_context(kb_name, prompt, top_k=top_k)
+    if not snippets:
+        return prompt
+    header = "## Context (KB excerpts)\n" + "\n\n".join(
+        f"- {s[:800]}" for s in snippets
+    )
+    return f"{header}\n\n---\n\n{prompt}"
 # query.py  (replace the build_kb_for_video + helper with the following)
 
 from .loader import load_documents, read_file  # import read_file
@@ -190,25 +206,15 @@ def _filters_for_task(task: str) -> MetadataFilters | None:
         return MetadataFilters(filters=[])  # no restriction
     return None
 
-def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[dict]:
+def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[str]:
     kb_dir = _resolve_kb_dir_for_video(video_path)
     if kb_dir is None:
         return []
-
     try:
         index: VectorStoreIndex = get_index(kb_dir)
         retriever = index.as_retriever(similarity_top_k=top_k)
         results = retriever.retrieve(query)
-
-        return [
-            {
-                "text": r.text,
-                "source": r.metadata.get("source", "unknown"),
-                "score": getattr(r, "score", None),
-            }
-            for r in results
-        ]
-
+        return [r.text for r in results]
     except Exception as e:
         print(f"⚠️ Retrieval failed: {e}")
         return []
