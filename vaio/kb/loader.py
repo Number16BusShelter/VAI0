@@ -16,17 +16,42 @@ try:
 except ImportError:
     PdfReader = None
 
+def default_kb_root() -> Path:
+    return Path("data/kb").resolve()
+
+def kb_path(name: str) -> Path:
+    root = default_kb_root()
+    root.mkdir(parents=True, exist_ok=True)
+    return root / name
+
+
 # -----------------------------
 # Ignore rules
 # -----------------------------
 IGNORE_NAMES = {
-    ".DS_Store", ".gitkeep", ".gitignore", ".env",
-    "__pycache__", "node_modules", "tmp", "venv",
+    ".DS_Store", ".gitkeep", ".gitignore", ".env", "thumbs.db",
+    "__pycache__", "node_modules", "tmp", "venv", ".Trashes", ".Spotlight-V100",
 }
 IGNORE_EXTS = {
-    ".db", ".sqlite", ".lock", ".log", ".bak", ".tmp", ".old",
+    ".db", ".sqlite", ".lock", ".log", ".bak", ".tmp", ".old", ".swp", ".swo",
 }
 SUPPORTED_EXTS = {".txt", ".md", ".pdf", ".json", ".csv", ".yml", ".yaml"}
+
+def _should_skip(path: Path) -> bool:
+    if not path.is_file():
+        return True
+    # Skip hidden files (starting with .) except .well-known
+    if path.name.startswith(".") and path.name not in {".well-known"}:
+        return True
+    if path.name in IGNORE_NAMES:
+        return True
+    if path.suffix.lower() in IGNORE_EXTS:
+        return True
+    # Skip unsupported file types
+    if path.suffix and path.suffix.lower() not in SUPPORTED_EXTS:
+        return True
+    return False
+
 
 def _category_for(path: Path) -> str:
     p = str(path).lower()
@@ -89,21 +114,6 @@ def read_file(path: Path) -> str:
     # Fallback for unknown but text-ish files
     return _read_text(path)
 
-def _should_skip(path: Path) -> bool:
-    if not path.is_file():
-        return True
-    if path.name.startswith("."):
-        return path.name != ".DS_Store" and True or False  # handled below by set
-    if path.name in IGNORE_NAMES:
-        return True
-    if path.suffix.lower() in IGNORE_EXTS:
-        return True
-    if path.name == ".DS_Store":
-        return True
-    # if you want to strictly enforce supported types:
-    if path.suffix and path.suffix.lower() not in SUPPORTED_EXTS:
-        return True
-    return False
 
 def load_documents(kb_path: Path) -> List[Document]:
     """

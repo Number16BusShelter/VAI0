@@ -1,6 +1,12 @@
-from pathlib import Path
-from .query import inject_context, retrieve, build_if_needed
-from .cli import register_kb_cli
- 
-__all__ = ["inject_context", "retrieve", "build_if_needed", "register_kb_cli"]
+# vaio/kb/__init__.py
+from __future__ import annotations
 
+"""
+Knowledge Base package for VAIO.
+Provides Click CLI group and supporting utilities.
+"""
+
+# Expose the Click command group so main CLI can import it
+from .cli import kb
+
+__all__ = ["kb"]

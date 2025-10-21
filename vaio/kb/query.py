@@ -7,27 +7,44 @@ from .paths import ensure_default_dirs, DEFAULT_KB_DIR
 from .store import build_index, get_index, collection_stats
 from .loader import load_documents
 from vaio.core.utils import load_meta, save_meta  # reuse existing meta IO
+from llama_index.core import get_response_synthesizer
+from llama_index.core.retrievers import VectorIndexRetriever
+from .store import open_index
 
+def retrieve_context(kb_name: str, query: str, top_k: int = 3) -> list[str]:
+    index = open_index(kb_name)
+    retriever = VectorIndexRetriever(index=index, similarity_top_k=top_k)
+    nodes = retriever.retrieve(query)
+    if not nodes:
+        print("⚠️ No context snippets retrieved from KB.")
+        return prompt
+
+    print(f"📂 Injected {len(nodes)} context snippets from KB.")
+    return [n.get_content() for n in nodes]
+
+def inject_context(kb_name: str, prompt: str, top_k: int = 3) -> str:
+    snippets = retrieve_context(kb_name, prompt, top_k=top_k)
+    if not snippets:
+        return prompt
+    header = "## Context (KB excerpts)\n" + "\n\n".join(
+        f"- {s[:800]}" for s in snippets
+    )
+    return f"{header}\n\n---\n\n{prompt}"
 # query.py  (replace the build_kb_for_video + helper with the following)
 
 from .loader import load_documents, read_file  # import read_file
+from .loader import IGNORE_NAMES, IGNORE_EXTS  # Import from loader
 
-IGNORE_NAMES = {
-    ".DS_Store", ".gitkeep", ".gitignore", ".env",
-    "__pycache__", "node_modules", "tmp", "venv",
-}
-IGNORE_EXTENSIONS = {
-    ".db", ".sqlite", ".lock", ".log", ".bak", ".tmp", ".old",
-}
 
 def _iter_valid_files(kb_dir: Path) -> list[Path]:
     files = []
     for f in kb_dir.glob("**/*"):
         if not f.is_file():
             continue
+        # Use imported ignore rules
         if f.name.startswith(".") or f.name in IGNORE_NAMES:
             continue
-        if f.suffix.lower() in IGNORE_EXTENSIONS:
+        if f.suffix.lower() in IGNORE_EXTS:
             continue
         files.append(f)
     return files
@@ -51,16 +68,27 @@ def _docs_from_files(files: list[Path]) -> list[Document]:
 # ────────────────────────────────
 # 🔍 Internal KB resolution
 # ────────────────────────────────
-def _resolve_kb_dir_for_video(video_path: Path) -> Path | None:
-    from .paths import DEFAULT_KB_DIR
+def _resolve_kb_dir_for_video(video_path: Path) -> str | None:
+    """
+    Resolve KB identifier for a video project.
+    Returns either a string identifier or None if disabled.
+    """
     ensure_default_dirs()
+    from vaio.core.utils import load_meta
+    
     meta = load_meta(video_path)
     kb_value = meta.get("knowledge", "__unset__")
-    if kb_value == "__unset__":
-        return DEFAULT_KB_DIR
-    if kb_value in (None, "", "null"):
+    
+    if kb_value in ("none", "null", None, "", False):
         return None
-    return Path(kb_value)
+    if kb_value == "__unset__":
+        return "default"  # Return string identifier, not Path
+    
+    # If it's a path, use it as identifier
+    if isinstance(kb_value, (str, Path)):
+        return str(kb_value)
+    
+    return "default"
 
 
 def set_kb_dir_for_video(video_path: Path, kb_dir: Path | None):
@@ -72,22 +100,48 @@ def set_kb_dir_for_video(video_path: Path, kb_dir: Path | None):
 # ────────────────────────────────
 # 🧱 Core KB operations
 # ────────────────────────────────
+
+def build_if_needed(video_path: Path):
+    """
+    Automatically build the KB if it exists but has no indexed documents.
+    """
+    from .store import collection_stats, build_index
+    from .loader import load_documents
+
+    kb_identifier = _resolve_kb_dir_for_video(video_path)
+    if kb_identifier is None:
+        return
+
+    stats = collection_stats(kb_identifier)
+    if stats["count"] == 0:
+        # Convert identifier back to Path for loading documents
+        if kb_identifier == "default":
+            kb_dir = DEFAULT_KB_DIR
+        else:
+            kb_dir = Path(kb_identifier)
+            
+        if kb_dir.exists() and any(kb_dir.iterdir()):
+            docs = load_documents(kb_dir)
+            build_index(kb_identifier, docs)
+            stats = collection_stats(kb_identifier)
+
+    print(f"🧠 KB active: {stats['collection']} ({stats['count']} documents)")
+
 def load_kb_if_available(video_path: Path) -> VectorStoreIndex | None:
     """
     Try to load an existing LlamaIndex/Chroma knowledge base for this project.
     Returns VectorStoreIndex or None if not found.
     """
-    kb_dir = _resolve_kb_dir_for_video(video_path)
-    if kb_dir is None:
+    kb_identifier = _resolve_kb_dir_for_video(video_path)
+    if kb_identifier is None:
         return None
 
     try:
-        index = get_index(kb_dir)
+        index = get_index(kb_identifier)
         return index
     except Exception as e:
-        print(f"⚠️ No existing KB index found for {kb_dir}: {e}")
+        print(f"⚠️ No existing KB index found for {kb_identifier}: {e}")
         return None
-
 
 def iter_knowledge_files(kb_dir: Path):
     """Yield valid knowledge files, skipping system and hidden files."""
@@ -109,7 +163,6 @@ def build_kb_for_video(video_path: Path, kb_dir: Path | None = None) -> dict:
     kb = kb_dir if kb_dir is not None else _resolve_kb_dir_for_video(video_path)
     if kb is None:
         return {"status": "disabled", "count": 0, "kb": None}
-
     kb = Path(kb)
     kb.mkdir(parents=True, exist_ok=True)
 
@@ -190,79 +243,74 @@ def _filters_for_task(task: str) -> MetadataFilters | None:
         return MetadataFilters(filters=[])  # no restriction
     return None
 
-def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[dict]:
+def retrieve(video_path: Path, query: str, top_k: int = 3) -> list[str]:
     kb_dir = _resolve_kb_dir_for_video(video_path)
     if kb_dir is None:
         return []
-
     try:
         index: VectorStoreIndex = get_index(kb_dir)
         retriever = index.as_retriever(similarity_top_k=top_k)
         results = retriever.retrieve(query)
-
-        return [
-            {
-                "text": r.text,
-                "source": r.metadata.get("source", "unknown"),
-                "score": getattr(r, "score", None),
-            }
-            for r in results
-        ]
-
+        return [r.text for r in results]
     except Exception as e:
         print(f"⚠️ Retrieval failed: {e}")
         return []
 
 
-def inject_context(video_path: Path, user_prompt: str, task: str = "desc") -> str:
+def inject_context(video_path_or_kb, prompt: str, top_k: int = 3, task: str | None = None) -> str:
     """
-    Retrieves relevant KB snippets and appends them to the LLM prompt.
-    Applies confidence threshold + source tracing for debugging clarity.
+    Retrieve relevant KB snippets and prepend them to the prompt.
+    Works with:
+      - video_path (Path)
+      - kb_name (str)
+    Optionally uses `task` to select filters (e.g. title, desc, translate).
     """
-    kb_dir = _resolve_kb_dir_for_video(video_path)
-    if kb_dir is None:
-        return user_prompt
 
-    try:
-        query = f"{task} context: {user_prompt[:400]}"
-        results = retrieve(video_path, query, top_k=5)
-        if not results:
-            return user_prompt
+    from .store import init_embed_model  # 🔹 ensure local model loaded
 
-        # Confidence threshold filter
-        filtered = [
-            r for r in results if r["score"] is None or r["score"] > 0.35
-        ]
-        if not filtered:
-            return user_prompt
+    # try:
+        # 🔹 Always use local embedding model (HuggingFace)
+    init_embed_model()
 
-        # Annotate each source
-        context_blocks = [
-            f"[{r['source']}] {r['text']}" for r in filtered if r.get("text")
-        ]
-        context_text = "\n\n".join(context_blocks)
+    # Resolve KB directory from video path or kb name
+    if isinstance(video_path_or_kb, Path):
+        kb_dir = _resolve_kb_dir_for_video(video_path_or_kb)
+        kb_name = str(kb_dir) if kb_dir else None
+    else:
+        kb_name = str(video_path_or_kb)
 
-        print(f"📚 Injected {len(filtered)} KB snippets into prompt.")
-        return f"{user_prompt}\n\n---\nContext (from KB):\n{context_text}\n---"
+    if not kb_name:
+        return prompt
 
-    except Exception as e:
-        print(f"⚠️ Context injection failed: {e}")
-        return user_prompt
+    # Optional: apply metadata filters by task
+    filters = _filters_for_task(task) if task else None
 
+    # Retrieve snippets
+    index = open_index(kb_name)
+    retriever = index.as_retriever(similarity_top_k=top_k, filters=filters)
+    nodes = retriever.retrieve(prompt)
+    if not nodes:
+        return prompt
 
-def build_if_needed(video_path: Path):
-    """
-    Automatically build the KB if it exists but has no indexed documents.
-    """
-    from .store import collection_stats
-    from .store import build_index
-    from .loader import load_documents
+    formatted_snippets = []
+    for n in nodes:
+        try:
+            if hasattr(n, "get_content"):
+                formatted_snippets.append(n.get_content().strip())
+            elif isinstance(n, str):
+                formatted_snippets.append(n.strip())
+            elif isinstance(n, dict):
+                formatted_snippets.append(n.get("text", "").strip())
+            else:
+                formatted_snippets.append(str(n).strip())
+        except Exception:
+            continue
 
-    kb_dir = _resolve_kb_dir_for_video(video_path)
-    if kb_dir is None:
-        return
+    context_text = "\n\n".join(formatted_snippets[:top_k])
+    header = f"## Context (task={task or 'general'})\n"
+    return f"{header}{context_text}\n\n---\n\n{prompt}"
 
-    stats = collection_stats(kb_dir)
-    if stats["count"] == 0 and any(kb_dir.iterdir()):
-        docs = load_documents(kb_dir)
-        build_index(kb_dir, docs)
+    # except Exception as e:
+    #     print(f"⚠️ Context injection failed: {e}")
+    #     return prompt
+

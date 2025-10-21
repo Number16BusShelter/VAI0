@@ -9,127 +9,48 @@ Video Auto Intelligence Operator — automated pipeline for:
  💬 caption generation
  📝 SEO title & description creation
  🌐 translation & localization
-
-Usage:
-  vaio <command> [video.mp4] [options]
-  vaio video.mp4         # auto-detect and run staged pipeline
 """
 
-"""
-Wel
-"""
-
-
-import argparse
+import os
 import sys
 import shutil
+import platform
 from pathlib import Path
 from textwrap import dedent
 
+import click
 
 from vaio.core import audio, description, translate, captions, full_auto
-from vaio.core.utils import load_meta, save_last_command, rerun_last_command, confirm
-from vaio.core.constants import PROJECT_VERSION, CLI_ICONS
+from vaio.core.utils import load_meta, save_last_command
+from vaio.core.constants import PROJECT_VERSION
 
-from vaio.kb import register_kb_cli
-from vaio.kb.cli import handle_kb
-
-
-try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich import box
-    console = Console()
-    RICH_AVAILABLE = True
-except ImportError:
-    console = None
-    RICH_AVAILABLE = False
+# Import KB click group
+from vaio.kb.cli import kb
 
 
 # ────────────────────────────────
-# Basic output helpers
+# Console banner
 # ────────────────────────────────
-def info(msg): print(f"{CLI_ICONS.get('info','ℹ️')}  {msg}")
-def success(msg): print(f"{CLI_ICONS.get('success','✅')} {msg}")
-def warn(msg): print(f"{CLI_ICONS.get('warning','⚠️')} {msg}")
-def fail(msg): print(f"{CLI_ICONS.get('error','❌')} {msg}")
+def banner() -> None:
+    click.secho(
+        dedent(
+            f"""
+            ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+            ┃   VAIO v{PROJECT_VERSION} – Video Auto Intelligence   ┃
+            ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+            """
+        ),
+        fg="cyan",
+    )
+
 
 # ────────────────────────────────
-# Core command handlers
+# Diagnostics
 # ────────────────────────────────
-from vaio.core.utils import save_last_command, rerun_last_command, confirm
+def run_diagnostics() -> bool:
+    """Check critical components and display status."""
+    import requests
 
-
-def handle_audio(args):
-    video = Path(args.video_file).resolve()
-    audio.process(video)
-    save_last_command(video, sys.argv)
-
-
-def handle_desc(args):
-    video = Path(args.video_file).resolve()
-    template = Path(args.template_file).resolve() if args.template_file else None
-    description.process(video, template)
-    save_last_command(video, sys.argv)
-
-
-def handle_translate(args):
-    video = Path(args.video_file).resolve()
-    translate.process(video)
-    save_last_command(video, sys.argv)
-
-
-def handle_captions(args):
-    video = Path(args.video_file).resolve()
-    captions.process(video)
-    save_last_command(video, sys.argv)
-
-def handle_tts(args):
-    video = Path(args.video_file).resolve()
-    from vaio.core import tts  # lazy import so Kokoro loads only when needed
-
-    tts.process(video)
-    save_last_command(video, sys.argv)
-
-
-def handle_continue(video_path: Path):
-    meta = load_meta(video_path)
-    stage = meta.get("stage", "init")
-    info(f"Detected current stage: {stage}")
-
-    # Add "audio_pending" and "init" to the same branch
-    if stage in ("init", "audio_pending", "audio_done"):
-        success("→ Running audio/caption verification...")
-        audio.verify(video_path)
-        stage = "captions_verified"
-
-    if stage in ("captions_verified", "captions_done"):
-        success("→ Generating title & description (TD)...")
-        description.process(video_path)
-        stage = "description_done"
-
-    if stage == "description_done":
-        success("→ Translating TD files...")
-        translate.process(video_path)
-        stage = "translated"
-
-    if stage == "translated":
-        success("→ Translating captions...")
-        captions.process(video_path)
-        stage = "captions_translated"
-
-    success("🎉 All stages complete!")
-    print("All outputs are stored beside the original video.")
-
-
-import platform
-import requests
-
-def handle_debug(args: argparse.Namespace):
-    """Run comprehensive environment & dependency diagnostics."""
-    print("🧪 Running VAIO system diagnostics...\n")
-
-    # --- Check functions ---
     def check_ffmpeg():
         return shutil.which("ffmpeg") is not None
 
@@ -147,9 +68,6 @@ def handle_debug(args: argparse.Namespace):
         except Exception:
             return False
 
-    def check_vscode():
-        return shutil.which("code") is not None
-
     def check_permissions():
         test_file = Path.cwd() / ".vaio_test.tmp"
         try:
@@ -159,148 +77,141 @@ def handle_debug(args: argparse.Namespace):
         except Exception:
             return False
 
-    # --- Collect results ---
     checks = {
-        "Python Version": sys.version.split()[0],
+        "Python": sys.version.split()[0],
         "OS": platform.system(),
         "FFmpeg": "✅ OK" if check_ffmpeg() else "❌ Missing",
         "Whisper": "✅ OK" if check_whisper() else "❌ Missing",
         "Ollama": "✅ Running" if check_ollama() else "❌ Not reachable",
-        "VS Code": "✅ Found" if check_vscode() else "⚠️ Not found",
         "Write Access": "✅ OK" if check_permissions() else "❌ No permission",
     }
 
-    # --- Display results ---
-    if RICH_AVAILABLE:
-        table = Table(title="VAIO Preflight Report", box=box.SIMPLE_HEAVY)
-        table.add_column("Component", style="cyan", justify="right")
-        table.add_column("Status", style="bold green")
-        for key, val in checks.items():
-            table.add_row(key, val)
-        console.print(table)
-    else:
-        print("System Diagnostics:")
-        for k, v in checks.items():
-            print(f" - {k}: {v}")
+    click.echo()
+    click.secho("🧪 VAIO System Diagnostics", bold=True, fg="cyan")
+    for k, v in checks.items():
+        click.echo(f" - {k}: {v}")
 
-    print("\n💡 Tip: Start Ollama with `ollama serve` if it's not running.")
-    print("   Run `ollama list` to verify installed models.")
-    print("   If any component is missing, reinstall via `pip install -r requirements.txt`.\n")
-
-    # Exit code = 0 if all critical checks pass
-    critical = all([
-        check_ffmpeg(),
-        check_whisper(),
-        check_ollama(),
-        check_permissions()
-    ])
+    critical = all([check_ffmpeg(), check_whisper(), check_ollama(), check_permissions()])
+    click.echo()
     if critical:
-        print("✅ Environment ready! You can now run `vaio ./video.mp4` safely.")
-        sys.exit(0)
+        click.secho("✅ Environment ready! You can safely run VAIO.", fg="green")
     else:
-        print("⚠️ Some checks failed. Fix above issues before running VAIO.")
-        sys.exit(1)
+        click.secho("⚠️ Some checks failed. Fix issues before running VAIO.", fg="yellow")
 
-
-def _check_import(module: str) -> bool:
-    try:
-        __import__(module)
-        return True
-    except Exception:
-        return False
+    return critical
 
 
 # ────────────────────────────────
-# CLI
+# Command group
 # ────────────────────────────────
-def main(argv=None):
-    banner = dedent(
-        f"""
-        ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-        ┃   VAIO v{PROJECT_VERSION} – Video Auto Intelligence   ┃
-        ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-        """
-    )
-    print(banner)
+@click.group()
+@click.version_option(PROJECT_VERSION, prog_name="VAIO")
+def cli():
+    """Video Auto Intelligence Operator (VAIO)"""
+    banner()
 
-    # --- Auto-staged run: `vaio <video.ext>`
+
+# ────────────────────────────────
+# Commands
+# ────────────────────────────────
+@cli.command("full-auto", help="🤖 Run the full pipeline end-to-end")
+@click.argument("video_file", type=click.Path(exists=True))
+@click.option("--template-file", type=click.Path(exists=True), default=None)
+def full_auto_cmd(video_file, template_file):
+    full_auto.run(Path(video_file).resolve(), Path(template_file).resolve() if template_file else None)
+    save_last_command(Path(video_file), sys.argv)
+
+
+@cli.command("audio", help="🎧 Extract audio and generate captions")
+@click.argument("video_file", type=click.Path(exists=True))
+def audio_cmd(video_file):
+    audio.process(Path(video_file).resolve())
+    save_last_command(Path(video_file), sys.argv)
+
+
+@cli.command("desc", help="📝 Generate SEO title + description (TD)")
+@click.argument("video_file", type=click.Path(exists=True))
+@click.option("--template-file", type=click.Path(exists=True), default=None)
+def desc_cmd(video_file, template_file):
+    description.process(Path(video_file).resolve(), Path(template_file).resolve() if template_file else None)
+    save_last_command(Path(video_file), sys.argv)
+
+
+@cli.command("translate", help="🌐 Translate title & description into all languages")
+@click.argument("video_file", type=click.Path(exists=True))
+def translate_cmd(video_file):
+    translate.process(Path(video_file).resolve())
+    save_last_command(Path(video_file), sys.argv)
+
+
+@cli.command("captions", help="💬 Translate captions into all languages")
+@click.argument("video_file", type=click.Path(exists=True))
+def captions_cmd(video_file):
+    captions.process(Path(video_file).resolve())
+    save_last_command(Path(video_file), sys.argv)
+
+
+@cli.command("tts", help="🎙️ Generate voiceovers (Text-to-Speech) from captions")
+@click.argument("video_file", type=click.Path(exists=True))
+def tts_cmd(video_file):
+    from vaio.core import tts
+    tts.process(Path(video_file).resolve())
+    save_last_command(Path(video_file), sys.argv)
+
+
+@cli.command("continue", help="⏭️ Resume automatically from the last saved stage")
+@click.argument("video_file", type=click.Path(exists=True))
+def continue_cmd(video_file):
+    video_path = Path(video_file).resolve()
+    meta = load_meta(video_path)
+    stage = meta.get("stage", "init")
+    click.echo(f"Detected current stage: {stage}")
+
+    if stage in ("init", "audio_pending", "audio_done"):
+        click.echo("→ Running audio/caption verification...")
+        audio.verify(video_path)
+        stage = "captions_verified"
+
+    if stage in ("captions_verified", "captions_done"):
+        click.echo("→ Generating title & description...")
+        description.process(video_path)
+        stage = "description_done"
+
+    if stage == "description_done":
+        click.echo("→ Translating TD files...")
+        translate.process(video_path)
+        stage = "translated"
+
+    if stage == "translated":
+        click.echo("→ Translating captions...")
+        captions.process(video_path)
+        stage = "captions_translated"
+
+    click.secho("🎉 All stages complete!", fg="green")
+
+
+@cli.command("check", help="🧪 Run environment diagnostics")
+def check_cmd():
+    run_diagnostics()
+
+
+# ────────────────────────────────
+# KB integration
+# ────────────────────────────────
+cli.add_command(kb)
+
+
+# ────────────────────────────────
+# Entry point
+# ────────────────────────────────
+def main():
+    # Auto mode: `vaio video.mp4`
     if len(sys.argv) == 2 and Path(sys.argv[1]).suffix.lower() in (".mp4", ".mov", ".mkv"):
         video_path = Path(sys.argv[1]).resolve()
-        print(f"🧩 Auto mode: Detected video file '{video_path.name}'")
+        click.secho(f"🧩 Auto mode: Detected video file '{video_path.name}'", fg="cyan")
         return full_auto.run(video_path)
 
-    # --- Help when no args ---
-    if len(sys.argv) == 1:
-        handle_debug()
-
-        print("Usage: vaio <command> <video.mp4> [options]\n")
-        print("Commands:")
-        print("  audio       🎧 Extract audio and generate captions")
-        print("  desc        📝 Generate SEO title + description")
-        print("  translate   🌐 Translate TD file into all languages")
-        print("  captions    💬 Translate captions into all languages")
-        print("  continue    ⏭️  Resume automatically from last stage")
-        print("  check       🧪 Run environment diagnostics\n")
-        print("Or simply:")
-        print("  vaio ./myvideo.mp4   → auto-staged pipeline\n")
-        sys.exit(0)
-
-    # --- Regular CLI mode ---
-    parser = argparse.ArgumentParser(
-        prog="vaio",
-        description="VAIO — Video Auto Intelligence Operator",
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument("--version", action="version", version=f"vaio {PROJECT_VERSION}")
-    sub = parser.add_subparsers(dest="command")
-
-    register_kb_cli(sub)
-
-    # add full-auto subcommand
-    p_full = sub.add_parser("full-auto", help="🤖 Run full staged pipeline end-to-end")
-    p_full.add_argument("video_file", help="Path to video file")
-    p_full.add_argument("--template-file", help="Optional path to template.txt")
-    p_full.set_defaults(func=lambda args: full_auto.run(
-        Path(args.video_file).resolve(),
-        Path(args.template_file).resolve() if args.template_file else None
-    ))
-
-    # commands
-    p_audio = sub.add_parser("audio", help="🎧 Extract audio and generate captions")
-    p_audio.add_argument("video_file")
-    p_audio.set_defaults(func=handle_audio)
-
-    p_desc = sub.add_parser("desc", help="📝 Generate SEO title + description (TD)")
-    p_desc.add_argument("video_file")
-    p_desc.add_argument("--template-file")
-    p_desc.set_defaults(func=handle_desc)
-
-    p_tr = sub.add_parser("translate", help="🌐 Translate TD file into all languages")
-    p_tr.add_argument("video_file")
-    p_tr.set_defaults(func=handle_translate)
-
-    p_capt = sub.add_parser("captions", help="💬 Translate captions into all languages")
-    p_capt.add_argument("video_file")
-    p_capt.set_defaults(func=handle_captions)
-
-    # --- tts ---
-    p_tts = sub.add_parser("tts", help="🎙️ Generate voiceovers (Text-to-Speech) from captions")
-    p_tts.add_argument("video_file", help="Path to video file")
-    p_tts.set_defaults(func=handle_tts)
-
-    p_check = sub.add_parser("check", help="🧪 Run environment diagnostics")
-    p_check.set_defaults(func=handle_debug)
-
-    args = parser.parse_args(argv)
-
-    if getattr(args, "kb_cmd", None):
-        handle_kb(args)
-        return
-
-    if not hasattr(args, "func"):
-        parser.print_help()
-        sys.exit(0)
-    args.func(args)
+    cli()
 
 
 if __name__ == "__main__":

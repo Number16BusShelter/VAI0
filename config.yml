@@ -1,0 +1,20 @@
+# config.yml
+ollama:
+  host: http://127.0.0.1:11434
+  model: gpt-oss
+  temperature: 0.4
+  top_p: 0.9
+
+kb:
+  default_dir: knowledge/default
+  top_k: 3
+  multilingual_embed: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+captions:
+  max_workers: 4
+  source_language: auto  # or 'en', 'id', etc.
+
+tts:
+  backend: kokoro
+  default_lang: en
+  output_format: mp3

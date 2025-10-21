@@ -95,3 +95,5 @@ __test__/
 
 knowledge/*
 data/*
+
+.continue/*

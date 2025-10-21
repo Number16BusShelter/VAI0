@@ -11,15 +11,15 @@ import os
 # 📦 Project Info
 # ────────────────────────────────
 PROJECT_NAME = "VAIO"
-PROJECT_VERSION = "1.0.0"
-PROJECT_AUTHOR = "NUMBER16BUSSHELTER"
+PROJECT_VERSION = "1.0.1"
+PROJECT_AUTHOR = "AXID.ONE"
 PROJECT_LICENSE = "MIT"
 
 # ────────────────────────────────
 # 🌐 Language Configuration
 # ────────────────────────────────
-SOURCE_LANGUAGE = "Russian"
-SOURCE_LANGUAGE_CODE = "ru"
+SOURCE_LANGUAGE = "English"
+SOURCE_LANGUAGE_CODE = "en"
 
 # Supported target translations (ISO codes → human-readable)
 TARGET_LANGUAGES = {
@@ -30,7 +30,7 @@ TARGET_LANGUAGES = {
     "it": "Italian",
     "es": "Spanish",
     "fr": "French",
-    "en": "English",
+    # "en": "English",
     "ru": "Russian"
 }
 
@@ -65,6 +65,38 @@ CAPTION_EXTENSION = ".srt"
 # ────────────────────────────────
 # 📄 Prompts (shared across modules)
 # ────────────────────────────────
+
+# TD Generation Constants
+TD_MAX_CAPTION_LENGTH = 2000
+TD_MAX_TITLE_LENGTH = 100
+TD_TITLE_TRUNCATE_LENGTH = 97
+TD_MAX_HASHTAGS = 15
+TD_HASHTAG_MIX = {
+    'broad': (3, 4),
+    'niche': (5, 7), 
+    'specific': (2, 3)
+}
+
+# Template Processing
+TEMPLATE_COMMENT_PREFIX = "--"
+TEMPLATE_BLOCK_PATTERN = r"<!--\s*<(?P<name>[^>]+)>\s*-->(?P<content>.*?)<!--\s*</\1>\s*-->"
+
+# Semantic Block Names
+BLOCK_NAMES = {
+    'INSTRUCTIONS': 'Instructions',
+    'CONTEXT': 'Context', 
+    'VIDEO_NAME': 'Video Name',
+    'VIDEO_DESCRIPTION': 'Video Description',
+    'HASH_TAGS': 'Hash tags'
+}
+
+# Guidance blocks to remove from final output
+GUIDANCE_BLOCKS = {'Instructions', 'Context', 'Video Name'}
+
+# Default fallbacks
+DEFAULT_HASHTAGS = ""
+DEFAULT_DESCRIPTION_GUIDE = "Create engaging, SEO-optimized description"
+
 TMP_FILENAME="tdtmp.txt"
 
 SYSTEM_PROMPT_TITLE = (

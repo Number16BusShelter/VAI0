@@ -9,12 +9,35 @@ license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "openai-whisper>=20240930",
-  "ollama>=0.1.9",
+  # Core pipeline
+  "ollama>=0.6.0",
+  "openai-whisper>=2024.9.30",
   "ffmpeg-python>=0.2.0",
-  "tqdm>=4.66.5"
-]
+  "tqdm>=4.66.5",
+  "numpy>=1.26.0",
 
+  # CLI & IO
+  "requests>=2.31.0",
+  "rich>=13.7.0",
+  "PyYAML>=6.0.1",
+  "PyPDF2>=3.0.1",
+  "soundfile>=0.12.1",
+
+  # KB stack
+  "chromadb>=0.5.5",
+  "llama-index>=0.10.0",
+  "llama-index-vector-stores-chroma>=0.1.0",
+  "llama-index-embeddings-huggingface>=0.1.0",
+  "transformers>=4.41.0",
+  "sentence-transformers>=3.0.0",
+
+  # TTS backend
+  "kokoro>=0.9.4",
+
+  # Optional (Apple Silicon / GPU acceleration, pin per your environment)
+  # "torch>=2.2.2; platform_system!='Darwin'",
+  # "torch>=2.2.2; platform_system=='Darwin'",
+]
 [project.scripts]
 vaio = "vaio.cli:main"
 

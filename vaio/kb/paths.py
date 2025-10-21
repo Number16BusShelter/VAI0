@@ -1,18 +1,19 @@
+# paths.py
 from __future__ import annotations
 from pathlib import Path
-import hashlib
 
-# Repo root: two levels up from this file (vaio/kb/…)
+# repo root = VAIO/
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-DEFAULT_KB_DIR = REPO_ROOT / "knowledge" / "default"
-DATA_DIR = REPO_ROOT / "data" / "kb"    # chroma persistence root
+# Knowledge source directories (user-provided content)
+BASE_KB_ROOT = REPO_ROOT / "knowledge"
+DEFAULT_KB_DIR = BASE_KB_ROOT / "default"
 
-def ensure_default_dirs():
+# ChromaDB persistence directory (centralized)
+DATA_ROOT = REPO_ROOT / "data" / "kb"
+DEFAULT_EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+def ensure_default_dirs() -> None:
+    """Create necessary directories if they don't exist"""
     DEFAULT_KB_DIR.mkdir(parents=True, exist_ok=True)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-def kb_collection_name(kb_dir: Path) -> str:
-    """Stable per-knowledge-dir collection name."""
-    key = str(kb_dir.resolve()).encode("utf-8")
-    return "kb_" + hashlib.md5(key).hexdigest()[:16]
+    DATA_ROOT.mkdir(parents=True, exist_ok=True)
