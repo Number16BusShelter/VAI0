@@ -33,23 +33,18 @@ def inject_context(kb_name: str, prompt: str, top_k: int = 3) -> str:
 # query.py  (replace the build_kb_for_video + helper with the following)
 
 from .loader import load_documents, read_file  # import read_file
+from .loader import IGNORE_NAMES, IGNORE_EXTS  # Import from loader
 
-IGNORE_NAMES = {
-    ".DS_Store", ".gitkeep", ".gitignore", ".env",
-    "__pycache__", "node_modules", "tmp", "venv",
-}
-IGNORE_EXTENSIONS = {
-    ".db", ".sqlite", ".lock", ".log", ".bak", ".tmp", ".old",
-}
 
 def _iter_valid_files(kb_dir: Path) -> list[Path]:
     files = []
     for f in kb_dir.glob("**/*"):
         if not f.is_file():
             continue
+        # Use imported ignore rules
         if f.name.startswith(".") or f.name in IGNORE_NAMES:
             continue
-        if f.suffix.lower() in IGNORE_EXTENSIONS:
+        if f.suffix.lower() in IGNORE_EXTS:
             continue
         files.append(f)
     return files
@@ -73,20 +68,27 @@ def _docs_from_files(files: list[Path]) -> list[Document]:
 # ────────────────────────────────
 # 🔍 Internal KB resolution
 # ────────────────────────────────
-def _resolve_kb_dir_for_video(video_path: Path) -> Path | None:
+def _resolve_kb_dir_for_video(video_path: Path) -> str | None:
     """
-    If project metadata sets 'knowledge' to a path/string, use it;
-    otherwise use the global default <repo_root>/kb/default.
+    Resolve KB identifier for a video project.
+    Returns either a string identifier or None if disabled.
     """
     ensure_default_dirs()
     from vaio.core.utils import load_meta
+    
     meta = load_meta(video_path)
     kb_value = meta.get("knowledge", "__unset__")
+    
     if kb_value in ("none", "null", None, "", False):
         return None
     if kb_value == "__unset__":
-        return DEFAULT_KB_DIR
-    return Path(kb_value)
+        return "default"  # Return string identifier, not Path
+    
+    # If it's a path, use it as identifier
+    if isinstance(kb_value, (str, Path)):
+        return str(kb_value)
+    
+    return "default"
 
 
 def set_kb_dir_for_video(video_path: Path, kb_dir: Path | None):
@@ -98,22 +100,48 @@ def set_kb_dir_for_video(video_path: Path, kb_dir: Path | None):
 # ────────────────────────────────
 # 🧱 Core KB operations
 # ────────────────────────────────
+
+def build_if_needed(video_path: Path):
+    """
+    Automatically build the KB if it exists but has no indexed documents.
+    """
+    from .store import collection_stats, build_index
+    from .loader import load_documents
+
+    kb_identifier = _resolve_kb_dir_for_video(video_path)
+    if kb_identifier is None:
+        return
+
+    stats = collection_stats(kb_identifier)
+    if stats["count"] == 0:
+        # Convert identifier back to Path for loading documents
+        if kb_identifier == "default":
+            kb_dir = DEFAULT_KB_DIR
+        else:
+            kb_dir = Path(kb_identifier)
+            
+        if kb_dir.exists() and any(kb_dir.iterdir()):
+            docs = load_documents(kb_dir)
+            build_index(kb_identifier, docs)
+            stats = collection_stats(kb_identifier)
+
+    print(f"🧠 KB active: {stats['collection']} ({stats['count']} documents)")
+
 def load_kb_if_available(video_path: Path) -> VectorStoreIndex | None:
     """
     Try to load an existing LlamaIndex/Chroma knowledge base for this project.
     Returns VectorStoreIndex or None if not found.
     """
-    kb_dir = _resolve_kb_dir_for_video(video_path)
-    if kb_dir is None:
+    kb_identifier = _resolve_kb_dir_for_video(video_path)
+    if kb_identifier is None:
         return None
 
     try:
-        index = get_index(kb_dir)
+        index = get_index(kb_identifier)
         return index
     except Exception as e:
-        print(f"⚠️ No existing KB index found for {kb_dir}: {e}")
+        print(f"⚠️ No existing KB index found for {kb_identifier}: {e}")
         return None
-
 
 def iter_knowledge_files(kb_dir: Path):
     """Yield valid knowledge files, skipping system and hidden files."""
@@ -286,23 +314,3 @@ def inject_context(video_path_or_kb, prompt: str, top_k: int = 3, task: str | No
     #     print(f"⚠️ Context injection failed: {e}")
     #     return prompt
 
-
-def build_if_needed(video_path: Path):
-    """
-    Automatically build the KB if it exists but has no indexed documents.
-    """
-    from .store import collection_stats
-    from .store import build_index
-    from .loader import load_documents
-
-    kb_dir = _resolve_kb_dir_for_video(video_path)
-    if kb_dir is None:
-        return
-
-    stats = collection_stats(kb_dir)
-    if stats["count"] == 0 and any(kb_dir.iterdir()):
-        docs = load_documents(kb_dir)
-        build_index(kb_dir, docs)
-
-    print(f"🧠 KB active: {stats['collection']} ({stats['count']} documents)")
-    
